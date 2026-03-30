@@ -569,13 +569,26 @@ async function exchangeToken() {
   const clientId=document.getElementById('eb-client-id').value.trim();
   const clientSecret=document.getElementById('eb-client-secret').value.trim();
   const ruName=document.getElementById('eb-runame').value.trim();
-  const code=document.getElementById('eb-auth-code').value.trim();
+  let code=document.getElementById('eb-auth-code').value.trim();
+  // Strip anything after & (e.g. &expires_in=299)
+  code=code.split('&')[0];
+  // Decode URL encoding if present (e.g. %5E -> ^)
+  try { code=decodeURIComponent(code); } catch(e) {}
   if(!clientId||!clientSecret||!code){alert('Fill in all fields and paste the auth code.');return;}
   const status=document.getElementById('token-status');
   status.innerHTML='<span class="spinner"></span> Exchanging token...';
   const b64=btoa(`${clientId}:${clientSecret}`);
+  // Build body manually to ensure correct encoding
+  const params=new URLSearchParams();
+  params.append('grant_type','authorization_code');
+  params.append('code',code);
+  params.append('redirect_uri',ruName);
   try {
-    const res=await fetch('https://shippingtool.dylanlee009.workers.dev/',{method:'POST',headers:{'Content-Type':'application/x-www-form-urlencoded','Authorization':`Basic ${b64}`},body:`grant_type=authorization_code&code=${encodeURIComponent(code)}&redirect_uri=${encodeURIComponent(ruName)}`});
+    const res=await fetch('https://shippingtool.dylanlee009.workers.dev/',{
+      method:'POST',
+      headers:{'Content-Type':'application/x-www-form-urlencoded','Authorization':`Basic ${b64}`},
+      body:params.toString()
+    });
     const data=await res.json();
     if(data.access_token){
       ebayToken=data.access_token;
@@ -587,7 +600,7 @@ async function exchangeToken() {
       status.innerHTML=`<span class="alert a-danger" style="display:inline-block">${data.error_description||JSON.stringify(data)}</span>`;
     }
   } catch(e) {
-    status.innerHTML=`<span class="alert a-warn" style="display:inline-block">Request failed (CORS). Try the manual JSON method below instead.<br><br>${e.message}</span>`;
+    status.innerHTML=`<span class="alert a-warn" style="display:inline-block">Request failed: ${e.message}</span>`;
   }
 }
 function disconnectEbay() {
