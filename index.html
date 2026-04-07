@@ -147,10 +147,10 @@ code{font-family:var(--mono);font-size:12px;background:var(--bg-secondary);paddi
         <div class="sec">Step 1 — eBay developer credentials</div>
         <div class="alert a-info" style="margin-bottom:12px">You need a free eBay Developer account. Go to <button class="btn-link" onclick="openUrl('https://developer.ebay.com')">developer.ebay.com</button> → sign in with your eBay account → Get Application Keys → create a Production keyset.</div>
         <div class="row">
-          <div><label>Client ID (App ID)</label><input id="eb-client-id" placeholder="YourName-AppName-PRD-..."/></div>
+          <div><label>Client ID (App ID)</label><input id="eb-client-id" value="DylanLee-Myshippi-PRD-0f606ba94-db7300bb" placeholder="YourName-AppName-PRD-..."/></div>
           <div><label>Client Secret (Cert ID)</label><input id="eb-client-secret" type="password" placeholder="PRD-..."/></div>
         </div>
-        <div class="mb"><label>RuName (redirect URL name)</label><input id="eb-runame" placeholder="YourName-AppName-PRD-..."/></div>
+        <div class="mb"><label>RuName (redirect URL name)</label><input id="eb-runame" value="Dylan_Lee-DylanLee-Myship-gtvzngcc" placeholder="YourName-AppName-PRD-..."/></div>
         <div class="flex">
           <button class="btn btn-primary" onclick="generateAuthUrl()">Generate authorization URL</button>
           <button class="btn btn-secondary btn-sm" onclick="saveEbayCreds()">Save credentials</button>
@@ -617,6 +617,30 @@ function initEbayPanel() {
 // ══════════════════════════════════════════════
 // EBAY ORDERS FETCH
 // ══════════════════════════════════════════════
+async function refreshAccessToken() {
+  const refreshToken=localStorage.getItem('ebay_refresh_token');
+  const creds=JSON.parse(localStorage.getItem('ebay_creds')||'{}');
+  const clientId=creds.clientId||document.getElementById('eb-client-id')?.value||'DylanLee-Myshippi-PRD-0f606ba94-db7300bb';
+  const clientSecret=document.getElementById('eb-client-secret')?.value||'';
+  if(!refreshToken||!clientSecret) return false;
+  const b64=btoa(`${clientId}:${clientSecret}`);
+  const params=new URLSearchParams();
+  params.append('grant_type','refresh_token');
+  params.append('refresh_token',refreshToken);
+  params.append('scope',['https://api.ebay.com/oauth/api_scope','https://api.ebay.com/oauth/api_scope/sell.fulfillment.readonly','https://api.ebay.com/oauth/api_scope/sell.fulfillment'].join(' '));
+  try {
+    const res=await fetch('https://shippingtool.dylanlee009.workers.dev/',{method:'POST',headers:{'Content-Type':'application/x-www-form-urlencoded','Authorization':`Basic ${b64}`},body:params.toString()});
+    const data=await res.json();
+    if(data.access_token){
+      ebayToken=data.access_token;
+      localStorage.setItem('ebay_access_token',ebayToken);
+      if(data.refresh_token) localStorage.setItem('ebay_refresh_token',data.refresh_token);
+      updateEbayBadge();
+      return true;
+    }
+  } catch(e) {}
+  return false;
+}
 async function fetchOrders(mode) {
   const status=document.getElementById('fetch-status');
   const list=document.getElementById('orders-list');
@@ -625,7 +649,11 @@ async function fetchOrders(mode) {
   const filter=mode==='awaiting'?'?filter=orderfulfillmentstatus:%7BNOT_STARTED%7C%7CIN_PROGRESS%7D&limit=50':'?limit=50';
   try {
     const res=await fetch(`https://shippingtool.dylanlee009.workers.dev/orders${filter}`,{headers:{'Authorization':`Bearer ${ebayToken}`,'Content-Type':'application/json'}});
-    if(res.status===401){status.innerHTML='<span style="color:#a32d2d">Token expired — reconnect eBay.</span>';ebayToken='';localStorage.removeItem('ebay_access_token');updateEbayBadge();initEbayPanel();return;}
+    if(res.status===401){
+      const refreshed=await refreshAccessToken();
+      if(refreshed){fetchOrders(mode);return;}
+      status.innerHTML='<span style="color:#a32d2d">Token expired — reconnect eBay.</span>';ebayToken='';localStorage.removeItem('ebay_access_token');updateEbayBadge();initEbayPanel();return;
+    }
     const data=await res.json();
     const ebayOrders=data.orders||[];
     status.innerHTML=`${ebayOrders.length} order${ebayOrders.length!==1?'s':''} found`;
