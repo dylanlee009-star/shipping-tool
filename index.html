@@ -39,6 +39,7 @@ textarea{resize:vertical;min-height:80px;font-family:var(--mono);font-size:12px}
 .row{display:grid;grid-template-columns:1fr 1fr;gap:12px;margin-bottom:12px}
 .row3{display:grid;grid-template-columns:1fr 1fr 1fr;gap:12px;margin-bottom:12px}
 .row4{display:grid;grid-template-columns:1fr 1fr 1fr 1fr;gap:12px;margin-bottom:12px}
+.row5{display:grid;grid-template-columns:1fr 1fr 1fr 1fr 1fr;gap:12px;margin-bottom:12px}
 .mb{margin-bottom:12px}
 .btn{padding:8px 16px;border-radius:var(--radius-md);font-size:13px;cursor:pointer;font-family:var(--font);transition:opacity .15s}
 .btn-primary{background:var(--text-primary);color:var(--bg-primary);border:none}.btn-primary:hover{opacity:.82}
@@ -61,6 +62,7 @@ textarea{resize:vertical;min-height:80px;font-family:var(--mono);font-size:12px}
 .a-danger{background:#FCEBEB;color:#791F1F;border:0.5px solid #F7C1C1}
 .a-good{background:#EAF3DE;color:#27500A;border:0.5px solid #C0DD97}
 .stat-grid{display:grid;grid-template-columns:repeat(4,1fr);gap:12px;margin-bottom:1.5rem}
+.stat-grid-5{display:grid;grid-template-columns:repeat(5,1fr);gap:12px;margin-bottom:1.5rem}
 .stat{background:var(--bg-secondary);border-radius:var(--radius-md);padding:.875rem}
 .stat-label{font-size:12px;color:var(--text-secondary);margin-bottom:4px}
 .stat-value{font-size:22px;font-weight:500}
@@ -85,6 +87,15 @@ textarea{resize:vertical;min-height:80px;font-family:var(--mono);font-size:12px}
 .ebay-order-header{display:flex;justify-content:space-between;align-items:flex-start;margin-bottom:6px}
 .spinner{display:inline-block;width:14px;height:14px;border:2px solid var(--border-mid);border-top-color:var(--text-primary);border-radius:50%;animation:spin .7s linear infinite;vertical-align:middle;margin-right:6px}
 @keyframes spin{to{transform:rotate(360deg)}}
+.profit-table{width:100%;border-collapse:collapse;font-size:12px}
+.profit-table th{font-size:10px;font-weight:500;color:var(--text-secondary);padding:6px 8px;border-bottom:0.5px solid var(--border-light);text-transform:uppercase;letter-spacing:.05em;text-align:right;white-space:nowrap}
+.profit-table th:first-child{text-align:left}
+.profit-table td{padding:7px 8px;border-bottom:0.5px solid var(--border-light);text-align:right;vertical-align:middle}
+.profit-table td:first-child{text-align:left;font-family:var(--mono);font-weight:500;font-size:11px}
+.profit-table tr:last-child td{border-bottom:none}
+.profit-table tr:hover td{background:var(--bg-secondary)}
+.margin-bar{height:6px;border-radius:3px;background:var(--bg-secondary);margin-top:3px;overflow:hidden;min-width:60px}
+.margin-fill{height:100%;border-radius:3px}
 .step-guide{counter-reset:step}
 .step{display:flex;gap:12px;margin-bottom:14px;align-items:flex-start}
 .step-n{width:24px;height:24px;border-radius:50%;background:var(--bg-secondary);border:0.5px solid var(--border-mid);font-size:12px;font-weight:500;display:flex;align-items:center;justify-content:center;flex-shrink:0}
@@ -106,6 +117,7 @@ code{font-family:var(--mono);font-size:12px;background:var(--bg-secondary);paddi
     <button class="tab" onclick="showTab('skus')">SKU library</button>
     <button class="tab" onclick="showTab('ebay')">eBay orders</button>
     <button class="tab" onclick="showTab('queue')">Dispatch queue</button>
+    <button class="tab" onclick="showTab('profit')">Profitability</button>
     <button class="tab" onclick="showTab('settings')">Settings</button>
   </div>
 
@@ -151,6 +163,9 @@ code{font-family:var(--mono);font-size:12px;background:var(--bg-secondary);paddi
           <div><label>Client Secret (Cert ID)</label><input id="eb-client-secret" type="password" placeholder="PRD-..."/></div>
         </div>
         <div class="mb"><label>RuName (redirect URL name)</label><input id="eb-runame" value="Dylan_Lee-DylanLee-Myship-gtvzngcc" placeholder="YourName-AppName-PRD-..."/></div>
+        <div class="alert a-warn" style="margin-bottom:12px">
+          <strong>Re-authorisation needed</strong> — the Finances API scope (<code>sell.finances</code>) has been added to enable real eBay fee data in the Profitability tab. Click "Generate authorization URL" and complete the flow once to upgrade your token.
+        </div>
         <div class="flex">
           <button class="btn btn-primary" onclick="generateAuthUrl()">Generate authorization URL</button>
           <button class="btn btn-secondary btn-sm" onclick="saveEbayCreds()">Save credentials</button>
@@ -181,6 +196,7 @@ code{font-family:var(--mono);font-size:12px;background:var(--bg-secondary);paddi
           <button class="btn btn-secondary btn-sm" onclick="disconnectEbay()">Disconnect eBay</button>
           <span id="fetch-status" style="font-size:13px;color:var(--text-secondary)"></span>
         </div>
+        <div id="auto-deduct-status" style="font-size:12px;color:var(--text-secondary);margin-top:6px"></div>
       </div>
 
       <div id="manual-json-card" class="card">
@@ -234,6 +250,11 @@ code{font-family:var(--mono);font-size:12px;background:var(--bg-secondary);paddi
     <div id="queue-wrap"><div class="empty">No orders yet. Fetch from eBay or add manually above.</div></div>
   </div>
 
+  <!-- ═══ PROFITABILITY ═══ -->
+  <div id="panel-profit" class="panel">
+    <div id="profit-content"></div>
+  </div>
+
   <!-- ═══ SETTINGS ═══ -->
   <div id="panel-settings" class="panel">
     <div class="card">
@@ -249,6 +270,19 @@ code{font-family:var(--mono);font-size:12px;background:var(--bg-secondary);paddi
       <button class="btn btn-primary" onclick="saveSettings()">Save</button>
       <span id="cfg-saved" style="font-size:12px;color:var(--text-secondary);margin-left:10px;display:none">Saved.</span>
     </div>
+
+    <div class="card">
+      <div class="sec">Profitability settings</div>
+      <div class="row3">
+        <div><label>Postage cost per order (AUD)</label><input id="cfg-postage-cost" type="number" step="0.01" placeholder="9.50"/></div>
+        <div><label>Packaging cost per order (AUD)</label><input id="cfg-packaging-cost" type="number" step="0.01" placeholder="0.90"/></div>
+        <div><label>eBay FVF fallback % <span style="font-weight:400;color:var(--text-hint)">(if Finances API unavailable)</span></label><input id="cfg-fvf-pct" type="number" step="0.1" placeholder="13.0"/></div>
+      </div>
+      <p style="font-size:12px;color:var(--text-secondary);margin-top:4px">Used in Profitability tab. Real FVF is pulled from eBay Finances API when available (requires re-auth with sell.finances scope).</p>
+      <button class="btn btn-primary btn-sm" style="margin-top:10px" onclick="saveProfitSettings()">Save</button>
+      <span id="profit-cfg-saved" style="font-size:12px;color:var(--text-secondary);margin-left:10px;display:none">Saved.</span>
+    </div>
+
     <div class="card">
       <div class="sec">Adjust stock manually</div>
       <div class="row3">
@@ -257,6 +291,27 @@ code{font-family:var(--mono);font-size:12px;background:var(--bg-secondary);paddi
         <div style="display:flex;align-items:flex-end"><button class="btn btn-primary btn-sm" onclick="adjustStock()">Update</button></div>
       </div>
     </div>
+    <div class="card">
+      <div class="sec">Import stock from eBay listing report</div>
+      <p style="font-size:13px;color:var(--text-secondary);margin-bottom:10px">
+        Download your active listings from
+        <button class="btn-link" onclick="openUrl('https://www.ebay.com.au/sh/reports/downloads')">Seller Hub → Reports → Downloads</button>
+        → <strong>All active listings</strong> → Download. Then upload the CSV here or paste the contents below.
+        The tool will read each listing's SKU and quantity, reverse-map to base units, and update your stock levels.
+      </p>
+      <div class="flex" style="margin-bottom:10px">
+        <button class="btn btn-secondary btn-sm" onclick="document.getElementById('ebay-csv-file').click()">Upload eBay CSV file</button>
+        <input type="file" id="ebay-csv-file" accept=".csv,.txt" style="display:none;width:auto" onchange="loadEbayCsvFile(event)"/>
+        <span style="font-size:12px;color:var(--text-secondary)">or paste CSV contents below</span>
+      </div>
+      <textarea id="ebay-csv-paste" placeholder="Paste eBay active listings CSV here — needs at least a 'Custom label (SKU)' and 'Available quantity' column..." style="min-height:100px;margin-bottom:8px"></textarea>
+      <div class="flex">
+        <button class="btn btn-primary btn-sm" onclick="importEbayCsv()">Update stock from CSV</button>
+        <span id="ebay-csv-status" style="font-size:12px;color:var(--text-secondary)"></span>
+      </div>
+      <div id="ebay-csv-preview" style="margin-top:10px"></div>
+    </div>
+
     <div class="card">
       <div class="sec">Data backup & restore</div>
       <div class="flex">
@@ -270,6 +325,18 @@ code{font-family:var(--mono);font-size:12px;background:var(--bg-secondary);paddi
 </div>
 
 <script>
+// ══════════════════════════════════════════════
+// COGS PER BASE UNIT (landed cost AUD)
+// ══════════════════════════════════════════════
+const COGS = {
+  'CL':9.74, 'BLK_CL':9.74, 'CS':4.20, 'CB':4.16,
+  'T_R':4.97, 'T_L':4.97, 'ST':5.11,
+  'P':6.25, 'LS':10.61, 'Tongue':1.49,
+  'SMA':1.60, 'SSSTEEL':9.25, 'GS_FR':17.60,
+  'SAjacket_XS':7.35,'SAjacket_S':7.35,'SAjacket_M':7.35,
+  'SAjacket_L':7.35,'SAjacket_XL':7.35,'SAjacket_XXL':7.35
+};
+
 // ══════════════════════════════════════════════
 // DATA DEFAULTS
 // ══════════════════════════════════════════════
@@ -350,6 +417,15 @@ let orders   = JSON.parse(localStorage.getItem('ap3_orders')   || '[]');
 let sales    = JSON.parse(localStorage.getItem('ap3_sales')    || 'null');
 let cfg      = JSON.parse(localStorage.getItem('ap3_cfg')      || '{}');
 let ebayToken= localStorage.getItem('ebay_access_token') || '';
+// Track which eBay order IDs have already been auto-deducted from stock
+let deductedOrderIds = JSON.parse(localStorage.getItem('ap3_deducted_orders') || '[]');
+// Cache for fetched eBay fees: {orderId: feeAmount}
+let ebayFees = JSON.parse(localStorage.getItem('ap3_ebay_fees') || '{}');
+// Cache for eBay order revenues: {orderId: {sku, revenue, qty}}
+let ebayRevenue = JSON.parse(localStorage.getItem('ap3_ebay_revenue') || '{}');
+
+// Profit settings
+let profitCfg = JSON.parse(localStorage.getItem('ap3_profit_cfg') || '{"postageCost":9.50,"packagingCost":0.90,"fvfPct":13.0}');
 
 // Seed velocity if first run
 if (!sales) { sales = buildSeedSales(); localStorage.setItem('ap3_sales', JSON.stringify(sales)); }
@@ -375,12 +451,15 @@ function save() {
   localStorage.setItem('ap3_listings', JSON.stringify(listings));
   localStorage.setItem('ap3_orders',   JSON.stringify(orders));
   localStorage.setItem('ap3_sales',    JSON.stringify(sales));
+  localStorage.setItem('ap3_deducted_orders', JSON.stringify(deductedOrderIds));
+  localStorage.setItem('ap3_ebay_fees', JSON.stringify(ebayFees));
+  localStorage.setItem('ap3_ebay_revenue', JSON.stringify(ebayRevenue));
 }
 
 // ══════════════════════════════════════════════
 // TABS
 // ══════════════════════════════════════════════
-const TAB_NAMES = ['stock','skus','ebay','queue','settings'];
+const TAB_NAMES = ['stock','skus','ebay','queue','profit','settings'];
 function showTab(t) {
   document.querySelectorAll('.tab').forEach((el,i) => el.classList.toggle('active', TAB_NAMES[i]===t));
   TAB_NAMES.forEach(n => { const p = document.getElementById('panel-'+n); p.style.display = n===t?'block':'none'; p.classList.toggle('active', n===t); });
@@ -388,7 +467,8 @@ function showTab(t) {
   if(t==='skus')   renderSKULib();
   if(t==='ebay')   initEbayPanel();
   if(t==='queue')  { renderQueue(); populateOrderDrop(); }
-  if(t==='settings') { loadSettings(); populateAdjBase(); }
+  if(t==='profit') renderProfit();
+  if(t==='settings') { loadSettings(); loadProfitSettings(); populateAdjBase(); }
 }
 TAB_NAMES.forEach((n,i) => { document.getElementById('panel-'+n).style.display = i===0?'block':'none'; });
 updateEbayBadge();
@@ -538,6 +618,13 @@ function toggleBase(code) {
 // ══════════════════════════════════════════════
 // EBAY OAUTH
 // ══════════════════════════════════════════════
+const EBAY_SCOPES = [
+  'https://api.ebay.com/oauth/api_scope',
+  'https://api.ebay.com/oauth/api_scope/sell.fulfillment.readonly',
+  'https://api.ebay.com/oauth/api_scope/sell.fulfillment',
+  'https://api.ebay.com/oauth/api_scope/sell.finances'
+].join(' ');
+
 let authUrlStr = '';
 function openUrl(url) { window.open(url,'_blank'); }
 function updateEbayBadge() {
@@ -558,8 +645,7 @@ function generateAuthUrl() {
   const clientId=document.getElementById('eb-client-id').value.trim();
   const ruName=document.getElementById('eb-runame').value.trim();
   if(!clientId||!ruName){alert('Enter Client ID and RuName first.');return;}
-  const scopes=encodeURIComponent(['https://api.ebay.com/oauth/api_scope','https://api.ebay.com/oauth/api_scope/sell.fulfillment.readonly','https://api.ebay.com/oauth/api_scope/sell.fulfillment'].join(' '));
-  authUrlStr=`https://auth.ebay.com/oauth2/authorize?client_id=${encodeURIComponent(clientId)}&redirect_uri=${encodeURIComponent(ruName)}&response_type=code&scope=${scopes}&prompt=login`;
+  authUrlStr=`https://auth.ebay.com/oauth2/authorize?client_id=${encodeURIComponent(clientId)}&redirect_uri=${encodeURIComponent(ruName)}&response_type=code&scope=${encodeURIComponent(EBAY_SCOPES)}&prompt=login`;
   document.getElementById('auth-url-display').textContent=authUrlStr;
   document.getElementById('auth-url-card').style.display='block';
   document.getElementById('token-card').style.display='block';
@@ -570,15 +656,12 @@ async function exchangeToken() {
   const clientSecret=document.getElementById('eb-client-secret').value.trim();
   const ruName=document.getElementById('eb-runame').value.trim();
   let code=document.getElementById('eb-auth-code').value.trim();
-  // Strip anything after & (e.g. &expires_in=299)
   code=code.split('&')[0];
-  // Decode URL encoding if present (e.g. %5E -> ^)
   try { code=decodeURIComponent(code); } catch(e) {}
   if(!clientId||!clientSecret||!code){alert('Fill in all fields and paste the auth code.');return;}
   const status=document.getElementById('token-status');
   status.innerHTML='<span class="spinner"></span> Exchanging token...';
   const b64=btoa(`${clientId}:${clientSecret}`);
-  // Build body manually to ensure correct encoding
   const params=new URLSearchParams();
   params.append('grant_type','authorization_code');
   params.append('code',code);
@@ -627,7 +710,7 @@ async function refreshAccessToken() {
   const params=new URLSearchParams();
   params.append('grant_type','refresh_token');
   params.append('refresh_token',refreshToken);
-  params.append('scope',['https://api.ebay.com/oauth/api_scope','https://api.ebay.com/oauth/api_scope/sell.fulfillment.readonly','https://api.ebay.com/oauth/api_scope/sell.fulfillment'].join(' '));
+  params.append('scope', EBAY_SCOPES);
   try {
     const res=await fetch('https://shippingtool.dylanlee009.workers.dev/',{method:'POST',headers:{'Content-Type':'application/x-www-form-urlencoded','Authorization':`Basic ${b64}`},body:params.toString()});
     const data=await res.json();
@@ -641,10 +724,13 @@ async function refreshAccessToken() {
   } catch(e) {}
   return false;
 }
+
 async function fetchOrders(mode) {
   const status=document.getElementById('fetch-status');
+  const deductStatus=document.getElementById('auto-deduct-status');
   const list=document.getElementById('orders-list');
   status.innerHTML='<span class="spinner"></span> Fetching from eBay...';
+  deductStatus.textContent='';
   list.innerHTML='';
   const filter=mode==='awaiting'?'?filter=orderfulfillmentstatus:%7BNOT_STARTED%7C%7CIN_PROGRESS%7D&limit=50':'?limit=50';
   try {
@@ -652,34 +738,103 @@ async function fetchOrders(mode) {
     if(res.status===401){
       const refreshed=await refreshAccessToken();
       if(refreshed){fetchOrders(mode);return;}
-      status.innerHTML='<span style="color:#a32d2d">Token expired — reconnect eBay.</span>';ebayToken='';localStorage.removeItem('ebay_access_token');updateEbayBadge();initEbayPanel();return;
+      status.innerHTML='<span style="color:#a32d2d">Token expired — reconnect eBay.</span>';
+      ebayToken='';localStorage.removeItem('ebay_access_token');updateEbayBadge();initEbayPanel();return;
     }
     const data=await res.json();
     const ebayOrders=data.orders||[];
     status.innerHTML=`${ebayOrders.length} order${ebayOrders.length!==1?'s':''} found`;
     if(!ebayOrders.length){list.innerHTML='<div class="empty">No orders found.</div>';return;}
+    // Auto-deduct stock from new orders
+    const deductResult = autoDeductFromOrders(ebayOrders);
+    if(deductResult.newCount>0){
+      deductStatus.innerHTML=`<span style="color:#27500A">✓ Auto-deducted stock for ${deductResult.newCount} new order${deductResult.newCount!==1?'s':''}${deductResult.skipped>0?' ('+deductResult.skipped+' already recorded)':''}</span>`;
+    } else {
+      deductStatus.innerHTML=`<span style="color:var(--text-hint)">No new orders to deduct (${deductResult.skipped} already recorded)</span>`;
+    }
+    // Store revenue data for profitability
+    storeOrderRevenue(ebayOrders);
     renderEbayOrders(ebayOrders);
+    save();
   } catch(e) {
     status.innerHTML='';
     list.innerHTML=`<div class="alert a-warn"><strong>Could not reach eBay API directly</strong> — this is normal (browser CORS restriction). Paste your orders JSON in the box below instead.</div>`;
   }
 }
+
+// Auto-deduct stock when orders are fetched (deduplicated by order ID)
+function autoDeductFromOrders(ebayOrders) {
+  let newCount=0, skipped=0;
+  ebayOrders.forEach(o=>{
+    const orderId = o.orderId||'';
+    if(!orderId || deductedOrderIds.includes(orderId)) { skipped++; return; }
+    const items = o.lineItems||[];
+    let anyDeducted = false;
+    items.forEach(it=>{
+      const rawSku=it.sku||'';
+      const normSku=normalizeSku(rawSku);
+      const l=listings.find(x=>x.sku===normSku||x.sku===rawSku);
+      if(!l) return;
+      const qty=parseInt(it.quantity)||1;
+      l.components.forEach(c=>{
+        const bi=bases.findIndex(b=>b.code===c.base);
+        if(bi>=0) bases[bi].stock=Math.max(0,bases[bi].stock-(c.qty*qty));
+        sales.push({
+          baseCode:c.base,
+          variantSku:normSku||rawSku,
+          baseUnits:c.qty*qty,
+          date:o.creationDate?new Date(o.creationDate).getTime():Date.now(),
+          ebayOrderId:orderId
+        });
+        anyDeducted=true;
+      });
+    });
+    if(anyDeducted){ deductedOrderIds.push(orderId); newCount++; }
+  });
+  return {newCount, skipped};
+}
+
+// Store revenue per listing SKU from eBay orders for profitability
+function storeOrderRevenue(ebayOrders) {
+  ebayOrders.forEach(o=>{
+    const orderId=o.orderId||'';
+    if(!orderId) return;
+    const items=o.lineItems||[];
+    items.forEach(it=>{
+      const rawSku=it.sku||'';
+      const normSku=normalizeSku(rawSku);
+      const price=parseFloat(it.lineItemCost?.value||it.total?.value||0);
+      const qty=parseInt(it.quantity)||1;
+      if(price>0){
+        if(!ebayRevenue[orderId]) ebayRevenue[orderId]={};
+        ebayRevenue[orderId][normSku||rawSku]={revenue:price, qty, date:o.creationDate||new Date().toISOString()};
+      }
+    });
+  });
+}
+
 function loadManualJson() {
   try {
     const data=JSON.parse(document.getElementById('manual-json').value);
     const ebayOrders=data.orders||(Array.isArray(data)?data:[]);
     if(!ebayOrders.length){alert('No orders found in JSON.');return;}
     document.getElementById('fetch-status').textContent=`${ebayOrders.length} order(s) loaded`;
+    const deductResult = autoDeductFromOrders(ebayOrders);
+    storeOrderRevenue(ebayOrders);
+    save();
+    const deductStatus=document.getElementById('auto-deduct-status');
+    deductStatus.innerHTML=deductResult.newCount>0
+      ?`<span style="color:#27500A">✓ Auto-deducted stock for ${deductResult.newCount} new order(s)</span>`
+      :`<span style="color:var(--text-hint)">No new orders to deduct</span>`;
     renderEbayOrders(ebayOrders);
   } catch(e){alert('Invalid JSON: '+e.message);}
 }
 
-// Map eBay SKU to our listing SKU (strips price suffixes, maps old SS_ format to new LS+ format)
+// Map eBay SKU to our listing SKU
 function normalizeSku(raw) {
   if(!raw) return '';
   let s=raw.trim();
   s=s.replace(/_[\d.]+$/,'');
-  // map old SS bundle format
   const bm=s.match(/^SS_P\+(\d+)$/i);
   if(bm) return `LS+P${bm[1]}`;
   const sm=s.match(/^SS1$/i);
@@ -704,6 +859,7 @@ function renderEbayOrders(ebayOrders) {
     const items=o.lineItems||[];
     const statusLabel=o.orderFulfillmentStatus||'UNKNOWN';
     const badgeCls=statusLabel==='NOT_STARTED'?'b-amber':statusLabel==='FULFILLED'?'b-green':'b-blue';
+    const alreadyDeducted=deductedOrderIds.includes(o.orderId||'');
     const itemRows=items.map(it=>{
       const rawSku=it.sku||'';
       const normSku=normalizeSku(rawSku);
@@ -733,6 +889,7 @@ function renderEbayOrders(ebayOrders) {
         <div>
           <strong style="font-size:14px">${name}</strong>
           <span class="badge b-gray" style="margin-left:6px;font-size:11px">${o.orderId||''}</span>
+          ${alreadyDeducted?'<span class="badge b-green" style="margin-left:4px;font-size:10px">stock deducted</span>':''}
           <div style="font-size:12px;color:var(--text-secondary);margin-top:2px">${[addr1,addr2,city,state,postcode].filter(Boolean).join(', ')}</div>
         </div>
         <span class="badge ${badgeCls}">${statusLabel.replace('_',' ')}</span>
@@ -757,6 +914,235 @@ function pushToQueue(data) {
   });
   save();
   alert(`Added ${data.name} to dispatch queue.`);
+}
+
+// ══════════════════════════════════════════════
+// FINANCES API — fetch real eBay fees
+// ══════════════════════════════════════════════
+async function fetchEbayFee(orderId) {
+  if(ebayFees[orderId]!==undefined) return ebayFees[orderId];
+  if(!ebayToken) return null;
+  try {
+    const res=await fetch(`https://shippingtool.dylanlee009.workers.dev/finances?orderId=${encodeURIComponent(orderId)}`,{
+      headers:{'Authorization':`Bearer ${ebayToken}`}
+    });
+    if(!res.ok) return null;
+    const data=await res.json();
+    // Sum all fee amounts from transactions
+    let totalFee=0;
+    const txns=data.transactions||[];
+    txns.forEach(t=>{
+      if(t.transactionType==='SALE'||t.transactionType==='NON_SALE_CHARGE'){
+        const fees=t.orderLineItems||[];
+        fees.forEach(li=>{
+          const feeAmt=parseFloat(li.totalFeeAmount?.value||0);
+          totalFee+=feeAmt;
+        });
+        // Also check top-level totalFeeAmount
+        if(t.totalFeeAmount?.value) totalFee=Math.max(totalFee, parseFloat(t.totalFeeAmount.value));
+      }
+    });
+    ebayFees[orderId]=totalFee;
+    localStorage.setItem('ap3_ebay_fees',JSON.stringify(ebayFees));
+    return totalFee;
+  } catch(e){ return null; }
+}
+
+// ══════════════════════════════════════════════
+// PROFITABILITY TAB
+// ══════════════════════════════════════════════
+function cogsForListing(l) {
+  return l.components.reduce((sum,c)=>{
+    const unitCost=COGS[c.base]||0;
+    return sum+(unitCost*c.qty);
+  },0);
+}
+
+function renderProfit() {
+  const container=document.getElementById('profit-content');
+  container.innerHTML='<div class="empty"><span class="spinner"></span> Calculating...</div>';
+
+  // Build per-listing profit data using stored revenue + sales velocity
+  const postageCost=parseFloat(profitCfg.postageCost)||9.50;
+  const packagingCost=parseFloat(profitCfg.packagingCost)||0.90;
+  const fvfPct=(parseFloat(profitCfg.fvfPct)||13.0)/100;
+  const fixedFeePerOrder=0.30; // eBay fixed fee per order AUD
+
+  // Aggregate revenue per listing SKU from stored ebayRevenue
+  const skuRevenue={}; // {sku: {totalRevenue, totalQty, orderCount}}
+  Object.values(ebayRevenue).forEach(orderItems=>{
+    Object.entries(orderItems).forEach(([sku,data])=>{
+      if(!skuRevenue[sku]) skuRevenue[sku]={totalRevenue:0,totalQty:0,orderCount:0};
+      skuRevenue[sku].totalRevenue+=data.revenue;
+      skuRevenue[sku].totalQty+=data.qty;
+      skuRevenue[sku].orderCount++;
+    });
+  });
+
+  // Build table rows per listing
+  const rows=listings.map(l=>{
+    const cogs=cogsForListing(l);
+    const rev=skuRevenue[l.sku];
+    const avgRevenue=rev&&rev.totalQty>0?rev.totalRevenue/rev.totalQty:null;
+    const fvf=avgRevenue?avgRevenue*fvfPct+fixedFeePerOrder/Math.max(rev.orderCount,1):null;
+
+    // Use velocity of primary base to estimate monthly units sold
+    const primaryBase=l.components[0]?.base;
+    const vel=primaryBase?velocity(primaryBase):0;
+    // Scale velocity by component qty ratio to get listing-level velocity
+    const primaryQty=l.components[0]?.qty||1;
+    const listingVel=vel/primaryQty; // listings per day for this SKU
+    const monthlyUnits=listingVel*30;
+
+    const totalCostPerUnit=cogs+postageCost+packagingCost+(fvf||( avgRevenue?avgRevenue*fvfPct+fixedFeePerOrder:0));
+    const grossMargin=avgRevenue?avgRevenue-totalCostPerUnit:null;
+    const marginPct=avgRevenue&&grossMargin!==null?grossMargin/avgRevenue*100:null;
+    const monthlyProfit=grossMargin!==null?grossMargin*monthlyUnits:null;
+
+    return {l, cogs, avgRevenue, fvf, postageCost, packagingCost, totalCostPerUnit, grossMargin, marginPct, monthlyUnits, monthlyProfit, hasRevData:!!rev};
+  });
+
+  // Overall monthly summary (only rows with data)
+  const rowsWithData=rows.filter(r=>r.hasRevData&&r.grossMargin!==null);
+  const totalMonthlyRevenue=rowsWithData.reduce((s,r)=>s+r.avgRevenue*r.monthlyUnits,0);
+  const totalMonthlyCOGS=rowsWithData.reduce((s,r)=>s+r.cogs*r.monthlyUnits,0);
+  const totalMonthlyFees=rowsWithData.reduce((s,r)=>s+(r.fvf||0)*r.monthlyUnits,0);
+  const totalMonthlyPostage=rowsWithData.reduce((s,r)=>s+r.postageCost*r.monthlyUnits,0);
+  const totalMonthlyPack=rowsWithData.reduce((s,r)=>s+r.packagingCost*r.monthlyUnits,0);
+  const totalMonthlyProfit=rowsWithData.reduce((s,r)=>s+(r.monthlyProfit||0),0);
+
+  const hasAnyRevData=rowsWithData.length>0;
+  const hasFinancesScope=ebayToken&&localStorage.getItem('ebay_refresh_token');
+
+  // Sort by margin % descending for ranking
+  const ranked=[...rowsWithData].sort((a,b)=>(b.marginPct||0)-(a.marginPct||0));
+
+  const fmt=(n,dp=2)=>n!==null&&!isNaN(n)?'$'+Math.abs(n).toFixed(dp):'-';
+  const fmtPct=(n)=>n!==null&&!isNaN(n)?n.toFixed(1)+'%':'-';
+
+  let html='';
+
+  // Data source notice
+  if(!hasAnyRevData){
+    html+=`<div class="alert a-info" style="margin-bottom:1rem">
+      <strong>No revenue data yet.</strong> Fetch your eBay orders from the eBay Orders tab to populate profitability. Costs (COGS, postage, packaging) are pre-loaded from your records.
+    </div>`;
+  } else if(!hasFinancesScope){
+    html+=`<div class="alert a-warn" style="margin-bottom:1rem">
+      <strong>Using estimated FVF (${profitCfg.fvfPct||13}%)</strong> — re-authorise eBay with the <code>sell.finances</code> scope in the eBay Orders tab to get real fee data per order.
+    </div>`;
+  } else {
+    html+=`<div class="alert a-good" style="margin-bottom:1rem">
+      Revenue from eBay order history · Fees from eBay Finances API · COGS from your purchase records
+    </div>`;
+  }
+
+  // Summary stats
+  if(hasAnyRevData){
+    const overallMarginPct=totalMonthlyRevenue>0?totalMonthlyProfit/totalMonthlyRevenue*100:0;
+    html+=`<div class="stat-grid-5" style="margin-bottom:1.5rem">
+      <div class="stat"><div class="stat-label">Est. monthly revenue</div><div class="stat-value">${fmt(totalMonthlyRevenue,0)}</div><div class="stat-sub">based on velocity</div></div>
+      <div class="stat"><div class="stat-label">Est. monthly COGS</div><div class="stat-value">${fmt(totalMonthlyCOGS,0)}</div></div>
+      <div class="stat"><div class="stat-label">Est. monthly fees</div><div class="stat-value">${fmt(totalMonthlyFees+totalMonthlyPostage+totalMonthlyPack,0)}</div><div class="stat-sub">eBay + postage + pack</div></div>
+      <div class="stat"><div class="stat-label">Est. monthly profit</div><div class="stat-value" style="color:${totalMonthlyProfit>=0?'#27500A':'#A32D2D'}">${totalMonthlyProfit<0?'-':''}${fmt(totalMonthlyProfit,0)}</div></div>
+      <div class="stat"><div class="stat-label">Overall margin</div><div class="stat-value" style="color:${overallMarginPct>=20?'#27500A':overallMarginPct>=0?'#633806':'#A32D2D'}">${fmtPct(overallMarginPct)}</div></div>
+    </div>`;
+
+    // Best/worst
+    if(ranked.length>=2){
+      html+=`<div class="row" style="margin-bottom:1rem">
+        <div class="card" style="margin-bottom:0;border-left:3px solid #639922">
+          <div class="sec">Most profitable listing</div>
+          <strong style="font-family:var(--mono)">${ranked[0].l.sku}</strong>
+          <span style="font-size:12px;color:var(--text-secondary);margin-left:8px">${ranked[0].l.label}</span>
+          <div style="margin-top:4px">
+            <span class="badge b-green">${fmtPct(ranked[0].marginPct)} margin</span>
+            <span style="font-size:12px;color:var(--text-secondary);margin-left:8px">${fmt(ranked[0].grossMargin)} per unit · ${fmt(ranked[0].monthlyProfit,0)}/mo</span>
+          </div>
+        </div>
+        <div class="card" style="margin-bottom:0;border-left:3px solid #E24B4A">
+          <div class="sec">Least profitable listing</div>
+          <strong style="font-family:var(--mono)">${ranked[ranked.length-1].l.sku}</strong>
+          <span style="font-size:12px;color:var(--text-secondary);margin-left:8px">${ranked[ranked.length-1].l.label}</span>
+          <div style="margin-top:4px">
+            <span class="badge ${(ranked[ranked.length-1].marginPct||0)<0?'b-red':'b-amber'}">${fmtPct(ranked[ranked.length-1].marginPct)} margin</span>
+            <span style="font-size:12px;color:var(--text-secondary);margin-left:8px">${fmt(ranked[ranked.length-1].grossMargin)} per unit · ${fmt(ranked[ranked.length-1].monthlyProfit,0)}/mo</span>
+          </div>
+        </div>
+      </div>`;
+    }
+  }
+
+  // Full SKU breakdown table
+  html+=`<div class="card">
+    <div class="sec">Per-listing breakdown</div>
+    <div style="overflow-x:auto">
+    <table class="profit-table">
+      <thead><tr>
+        <th style="text-align:left">SKU</th>
+        <th style="text-align:left">Listing</th>
+        <th>Avg sale price</th>
+        <th>COGS</th>
+        <th>eBay fees</th>
+        <th>Postage</th>
+        <th>Packaging</th>
+        <th>Gross profit</th>
+        <th>Margin</th>
+        <th>Monthly units</th>
+        <th>Monthly profit</th>
+      </tr></thead>
+      <tbody>`;
+
+  rows.forEach(r=>{
+    const marginColor=r.marginPct===null?'var(--text-hint)':r.marginPct>=30?'#27500A':r.marginPct>=15?'#633806':'#A32D2D';
+    const marginBarColor=r.marginPct===null?'var(--bg-tertiary)':r.marginPct>=30?'#639922':r.marginPct>=15?'#EF9F27':'#E24B4A';
+    const marginBarWidth=r.marginPct!==null?Math.max(0,Math.min(100,r.marginPct)):0;
+    html+=`<tr>
+      <td style="text-align:left;white-space:nowrap">${r.l.sku}</td>
+      <td style="text-align:left;font-family:var(--font);font-size:12px;color:var(--text-secondary);max-width:160px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap">${r.l.label}</td>
+      <td>${r.avgRevenue!==null?fmt(r.avgRevenue):'<span style="color:var(--text-hint);font-size:11px">no data</span>'}</td>
+      <td>${fmt(r.cogs)}</td>
+      <td>${r.fvf!==null?fmt(r.fvf):'<span style="color:var(--text-hint);font-size:11px">est. '+(r.avgRevenue!==null?fmt(r.avgRevenue*fvfPct):'—')+'</span>'}</td>
+      <td>${fmt(r.postageCost)}</td>
+      <td>${fmt(r.packagingCost)}</td>
+      <td style="color:${r.grossMargin!==null?(r.grossMargin>=0?'#27500A':'#A32D2D'):'var(--text-hint)'}">${r.grossMargin!==null?(r.grossMargin<0?'-':'')+fmt(r.grossMargin):'—'}</td>
+      <td>
+        <span style="color:${marginColor};font-weight:500">${fmtPct(r.marginPct)}</span>
+        <div class="margin-bar"><div class="margin-fill" style="width:${marginBarWidth}%;background:${marginBarColor}"></div></div>
+      </td>
+      <td>${r.monthlyUnits>0?r.monthlyUnits.toFixed(1):'<span style="color:var(--text-hint)">—</span>'}</td>
+      <td style="color:${r.monthlyProfit!==null?(r.monthlyProfit>=0?'#27500A':'#A32D2D'):'var(--text-hint)'}">${r.monthlyProfit!==null?(r.monthlyProfit<0?'-':'')+fmt(r.monthlyProfit,0):'—'}</td>
+    </tr>`;
+  });
+
+  html+=`</tbody></table></div>
+
+    <div style="margin-top:12px;font-size:11px;color:var(--text-secondary);line-height:1.8">
+      <strong>Notes:</strong>
+      COGS from your purchase records (blended landed cost) ·
+      Postage $${postageCost.toFixed(2)} flat per order ·
+      Packaging $${packagingCost.toFixed(2)} per order ·
+      ${hasFinancesScope?'eBay fees from Finances API':'eBay FVF estimated at '+fmtPct(fvfPct*100)+' of sale price'} ·
+      Monthly units = 30-day velocity × 30
+    </div>
+  </div>`;
+
+  // COGS reference card
+  html+=`<div class="card">
+    <div class="sec">COGS reference — base unit costs</div>
+    <div style="display:grid;grid-template-columns:repeat(auto-fill,minmax(200px,1fr));gap:8px">
+      ${Object.entries(COGS).map(([code,cost])=>{
+        const b=bases.find(x=>x.code===code);
+        return`<div style="display:flex;justify-content:space-between;font-size:12px;padding:6px 8px;background:var(--bg-secondary);border-radius:6px">
+          <span style="font-family:var(--mono);font-weight:500">${code}</span>
+          <span style="color:var(--text-secondary)">${b?b.name:code}</span>
+          <span style="font-weight:500">$${cost.toFixed(2)}</span>
+        </div>`;
+      }).join('')}
+    </div>
+  </div>`;
+
+  container.innerHTML=html;
 }
 
 // ══════════════════════════════════════════════
@@ -838,10 +1224,10 @@ function exportCSV() {
   const a=document.createElement('a'); a.href=URL.createObjectURL(blob);
   const d=new Date(); a.download=`auspost_${d.getFullYear()}${String(d.getMonth()+1).padStart(2,'0')}${String(d.getDate()).padStart(2,'0')}.csv`;
   a.click(); URL.revokeObjectURL(blob);
+  // Note: stock deduction now happens at fetch time, not export time
+  // But we still mark as exported and record revenue if not already done
   sel.forEach(o=>{
     const idx=orders.findIndex(x=>x.id===o.id); if(idx>=0) orders[idx].exported=true;
-    const l=listings.find(x=>x.sku===o.sku);
-    if(l){l.components.forEach(c=>{const bi=bases.findIndex(b=>b.code===c.base);if(bi>=0)bases[bi].stock=Math.max(0,bases[bi].stock-(c.qty*(parseInt(o.qty)||1)));sales.push({baseCode:c.base,variantSku:o.sku,baseUnits:c.qty*(parseInt(o.qty)||1),date:Date.now()});});}
   });
   save(); renderQueue();
 }
@@ -851,10 +1237,172 @@ function exportCSV() {
 // ══════════════════════════════════════════════
 function loadSettings(){Object.entries({name:'cfg-name',phone:'cfg-phone',addr1:'cfg-addr1',suburb:'cfg-suburb',state:'cfg-state',postcode:'cfg-postcode',email:'cfg-email'}).forEach(([k,id])=>{if(cfg[k])document.getElementById(id).value=cfg[k];});}
 function saveSettings(){cfg={name:document.getElementById('cfg-name').value.trim(),phone:document.getElementById('cfg-phone').value.trim(),addr1:document.getElementById('cfg-addr1').value.trim(),suburb:document.getElementById('cfg-suburb').value.trim(),state:document.getElementById('cfg-state').value,postcode:document.getElementById('cfg-postcode').value.trim(),email:document.getElementById('cfg-email').value.trim()};localStorage.setItem('ap3_cfg',JSON.stringify(cfg));const s=document.getElementById('cfg-saved');s.style.display='inline';setTimeout(()=>s.style.display='none',2000);}
+function loadProfitSettings(){
+  document.getElementById('cfg-postage-cost').value=profitCfg.postageCost||9.50;
+  document.getElementById('cfg-packaging-cost').value=profitCfg.packagingCost||0.90;
+  document.getElementById('cfg-fvf-pct').value=profitCfg.fvfPct||13.0;
+}
+function saveProfitSettings(){
+  profitCfg={
+    postageCost:parseFloat(document.getElementById('cfg-postage-cost').value)||9.50,
+    packagingCost:parseFloat(document.getElementById('cfg-packaging-cost').value)||0.90,
+    fvfPct:parseFloat(document.getElementById('cfg-fvf-pct').value)||13.0
+  };
+  localStorage.setItem('ap3_profit_cfg',JSON.stringify(profitCfg));
+  const s=document.getElementById('profit-cfg-saved');s.style.display='inline';setTimeout(()=>s.style.display='none',2000);
+}
 function populateAdjBase(){const sel=document.getElementById('adj-base');sel.innerHTML='<option value="">— select —</option>'+bases.map(b=>`<option value="${b.code}">${b.code} — ${b.name} (${b.stock})</option>`).join('');}
 function adjustStock(){const code=document.getElementById('adj-base').value;const v=parseInt(document.getElementById('adj-qty').value);if(!code){alert('Select a base SKU.');return;}if(isNaN(v)||v<0){alert('Enter a valid number.');return;}const i=bases.findIndex(b=>b.code===code);if(i>=0){bases[i].stock=v;save();populateAdjBase();alert(`${code} stock updated to ${v}.`);}}
-function exportBackup(){const cleanSales=sales.filter(s=>!s._seeded);const blob=new Blob([JSON.stringify({bases,listings,orders,sales:cleanSales,cfg},null,2)],{type:'application/json'});const a=document.createElement('a');a.href=URL.createObjectURL(blob);a.download='auspost_backup.json';a.click();}
-function importBackup(e){const r=new FileReader();r.onload=ev=>{try{const d=JSON.parse(ev.target.result);if(d.bases)bases=d.bases;if(d.listings)listings=d.listings;if(d.orders)orders=d.orders;if(d.sales)sales=d.sales;if(d.cfg)cfg=d.cfg;save();localStorage.setItem('ap3_cfg',JSON.stringify(cfg));alert('Imported successfully.');renderStock();}catch(err){alert('Invalid backup file.');}};r.readAsText(e.target.files[0]);}
+// ══════════════════════════════════════════════
+// EBAY CSV STOCK IMPORT
+// ══════════════════════════════════════════════
+function loadEbayCsvFile(e) {
+  const r=new FileReader();
+  r.onload=ev=>{
+    document.getElementById('ebay-csv-paste').value=ev.target.result;
+    importEbayCsv();
+  };
+  r.readAsText(e.target.files[0]);
+  // reset so same file can be re-uploaded
+  e.target.value='';
+}
+
+function parseEbayCsv(text) {
+  // Split into lines, handle \r\n and \n
+  const lines=text.trim().split(/\r?\n/);
+  if(lines.length<2) return null;
+
+  // Parse a CSV line respecting quoted fields
+  function parseLine(line) {
+    const fields=[];
+    let cur='', inQ=false;
+    for(let i=0;i<line.length;i++){
+      const c=line[i];
+      if(c==='"'){
+        if(inQ&&line[i+1]==='"'){cur+='"';i++;}
+        else inQ=!inQ;
+      } else if(c===','&&!inQ){
+        fields.push(cur.trim()); cur='';
+      } else cur+=c;
+    }
+    fields.push(cur.trim());
+    return fields;
+  }
+
+  // Find the header row — eBay CSVs sometimes have comment rows at top
+  let headerIdx=-1;
+  let headers=[];
+  for(let i=0;i<Math.min(lines.length,10);i++){
+    const f=parseLine(lines[i]);
+    // Look for a row containing both a SKU-like and quantity-like column
+    const lower=f.map(x=>x.toLowerCase());
+    if(lower.some(x=>x.includes('custom label')||x.includes('sku'))&&
+       lower.some(x=>x.includes('available')||x.includes('quantity'))){
+      headerIdx=i; headers=f; break;
+    }
+  }
+  if(headerIdx===-1) return null;
+
+  // Find column indices — flexible matching
+  const hi=headers.map(h=>h.toLowerCase());
+  const skuCol=hi.findIndex(h=>h.includes('custom label')||h==='sku'||h.includes('custom label (sku)'));
+  const qtyCol=hi.findIndex(h=>h.includes('available quantity')||h==='available quantity'||h.includes('quantity available')||(h.includes('quantity')&&!h.includes('sold')));
+
+  if(skuCol===-1||qtyCol===-1) return null;
+
+  const rows=[];
+  for(let i=headerIdx+1;i<lines.length;i++){
+    if(!lines[i].trim()) continue;
+    const f=parseLine(lines[i]);
+    const sku=(f[skuCol]||'').trim();
+    const qty=parseInt((f[qtyCol]||'').replace(/[^0-9]/g,''));
+    if(sku&&!isNaN(qty)) rows.push({sku, qty});
+  }
+  return rows;
+}
+
+function importEbayCsv() {
+  const text=document.getElementById('ebay-csv-paste').value.trim();
+  const statusEl=document.getElementById('ebay-csv-status');
+  const previewEl=document.getElementById('ebay-csv-preview');
+  if(!text){statusEl.textContent='Paste CSV content first.';return;}
+
+  const rows=parseEbayCsv(text);
+  if(!rows||!rows.length){
+    statusEl.innerHTML='<span style="color:#A32D2D">Could not parse CSV — make sure it includes "Custom label (SKU)" and "Available quantity" columns.</span>';
+    previewEl.innerHTML='';
+    return;
+  }
+
+  // For each base SKU, collect the implied stock from each listing that uses it
+  // implied base stock from a listing = listing qty × component qty
+  // We take the MINIMUM implied value across all listings sharing a base (conservative)
+  const baseImplied={}; // {baseCode: [implied values]}
+
+  const matched=[], unmatched=[];
+  rows.forEach(({sku, qty})=>{
+    const normSku=normalizeSku(sku)||sku.toUpperCase();
+    const listing=listings.find(l=>l.sku===normSku||l.sku===sku);
+    if(!listing){ unmatched.push(sku); return; }
+    matched.push({sku:normSku, qty, listing});
+    listing.components.forEach(c=>{
+      const implied=qty*c.qty; // base units this listing implies
+      if(!baseImplied[c.base]) baseImplied[c.base]=[];
+      baseImplied[c.base].push(implied);
+    });
+  });
+
+  // Apply to bases — use minimum implied value (most conservative)
+  const updates=[];
+  Object.entries(baseImplied).forEach(([baseCode, values])=>{
+    const minVal=Math.min(...values);
+    const bi=bases.findIndex(b=>b.code===baseCode);
+    if(bi>=0){
+      const oldStock=bases[bi].stock;
+      bases[bi].stock=minVal;
+      updates.push({code:baseCode, name:bases[bi].name, old:oldStock, new:minVal});
+    }
+  });
+
+  save();
+
+  // Build preview table
+  let html='';
+  if(updates.length){
+    html+=`<div class="alert a-good" style="margin-bottom:8px">Updated ${updates.length} base SKU${updates.length!==1?'s':''} from ${matched.length} matched listing${matched.length!==1?'s':''}.</div>`;
+    html+=`<table style="width:100%;border-collapse:collapse;font-size:12px;margin-bottom:8px">
+      <thead><tr>
+        <th style="text-align:left;padding:4px 6px;font-size:10px;color:var(--text-secondary);border-bottom:0.5px solid var(--border-light);text-transform:uppercase">Base SKU</th>
+        <th style="text-align:left;padding:4px 6px;font-size:10px;color:var(--text-secondary);border-bottom:0.5px solid var(--border-light);text-transform:uppercase">Product</th>
+        <th style="text-align:right;padding:4px 6px;font-size:10px;color:var(--text-secondary);border-bottom:0.5px solid var(--border-light);text-transform:uppercase">Was</th>
+        <th style="text-align:right;padding:4px 6px;font-size:10px;color:var(--text-secondary);border-bottom:0.5px solid var(--border-light);text-transform:uppercase">Now</th>
+        <th style="text-align:right;padding:4px 6px;font-size:10px;color:var(--text-secondary);border-bottom:0.5px solid var(--border-light);text-transform:uppercase">Change</th>
+      </tr></thead><tbody>`;
+    updates.forEach(u=>{
+      const diff=u.new-u.old;
+      const diffStr=diff===0?'—':(diff>0?'+':'')+diff;
+      const diffColor=diff>0?'#27500A':diff<0?'#A32D2D':'var(--text-secondary)';
+      html+=`<tr>
+        <td style="padding:5px 6px;border-bottom:0.5px solid var(--border-light);font-family:var(--mono);font-weight:500;font-size:11px">${u.code}</td>
+        <td style="padding:5px 6px;border-bottom:0.5px solid var(--border-light);color:var(--text-secondary)">${u.name}</td>
+        <td style="padding:5px 6px;border-bottom:0.5px solid var(--border-light);text-align:right">${u.old}</td>
+        <td style="padding:5px 6px;border-bottom:0.5px solid var(--border-light);text-align:right;font-weight:500">${u.new}</td>
+        <td style="padding:5px 6px;border-bottom:0.5px solid var(--border-light);text-align:right;color:${diffColor};font-weight:500">${diffStr}</td>
+      </tr>`;
+    });
+    html+=`</tbody></table>`;
+  }
+  if(unmatched.length){
+    html+=`<div class="alert a-warn">Skipped ${unmatched.length} listing${unmatched.length!==1?'s':''} with no matching SKU in your library: <span style="font-family:var(--mono);font-size:11px">${unmatched.join(', ')}</span></div>`;
+  }
+  previewEl.innerHTML=html;
+  statusEl.textContent='';
+  // Refresh stock view if it's visible
+  if(document.getElementById('panel-stock').classList.contains('active')) renderStock();
+}
+
+function exportBackup(){const cleanSales=sales.filter(s=>!s._seeded);const blob=new Blob([JSON.stringify({bases,listings,orders,sales:cleanSales,cfg,profitCfg,ebayFees,ebayRevenue,deductedOrderIds},null,2)],{type:'application/json'});const a=document.createElement('a');a.href=URL.createObjectURL(blob);a.download='auspost_backup.json';a.click();}
+function importBackup(e){const r=new FileReader();r.onload=ev=>{try{const d=JSON.parse(ev.target.result);if(d.bases)bases=d.bases;if(d.listings)listings=d.listings;if(d.orders)orders=d.orders;if(d.sales)sales=d.sales;if(d.cfg)cfg=d.cfg;if(d.profitCfg)profitCfg=d.profitCfg;if(d.ebayFees)ebayFees=d.ebayFees;if(d.ebayRevenue)ebayRevenue=d.ebayRevenue;if(d.deductedOrderIds)deductedOrderIds=d.deductedOrderIds;save();localStorage.setItem('ap3_cfg',JSON.stringify(cfg));localStorage.setItem('ap3_profit_cfg',JSON.stringify(profitCfg));alert('Imported successfully.');renderStock();}catch(err){alert('Invalid backup file.');}};r.readAsText(e.target.files[0]);}
 
 // ══════════════════════════════════════════════
 // INIT
