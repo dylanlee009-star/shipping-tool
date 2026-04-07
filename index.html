@@ -1675,6 +1675,7 @@ function importEbayCsv() {
     statusEl.innerHTML = '<span style="color:#A32D2D">Could not parse CSV.</span>';
     previewEl.innerHTML = ''; return;
   }
+  // baseImplied: {baseCode: [{listingSku, implied}]}
   const baseImplied = {}, matched = [], unmatched = [];
   rows.forEach(({sku, qty}) => {
     const normSku = normalizeSku(sku) || sku.toUpperCase();
@@ -1684,21 +1685,29 @@ function importEbayCsv() {
     listing.components.forEach(c => {
       const implied = qty * c.qty;
       if (!baseImplied[c.base]) baseImplied[c.base] = [];
-      baseImplied[c.base].push(implied);
+      baseImplied[c.base].push({listingSku: normSku, implied});
     });
   });
   const updates = [];
-  Object.entries(baseImplied).forEach(([baseCode, values]) => {
-    const minVal = Math.min(...values);
+  Object.entries(baseImplied).forEach(([baseCode, entries]) => {
+    // Use MAX implied value: the listing implying the most base units is the best signal
+    // of actual physical stock. MIN was wrong -- a low-stock bundle only has fewer units
+    // because of its OTHER components, not because this base is scarce.
+    const bestEntry = entries.reduce((a, b) => b.implied > a.implied ? b : a);
+    const maxVal = bestEntry.implied;
     const bi = bases.findIndex(b => b.code === baseCode);
-    if (bi >= 0) { const old = bases[bi].stock; bases[bi].stock = minVal; updates.push({code:baseCode, name:bases[bi].name, old, new:minVal}); }
+    if (bi >= 0) {
+      const oldStock = bases[bi].stock;
+      bases[bi].stock = maxVal;
+      updates.push({code:baseCode, name:bases[bi].name, old:oldStock, new:maxVal, sourceSku:bestEntry.listingSku});
+    }
   });
   save();
   let html = '';
   if (updates.length) {
     html += `<div class="alert a-good" style="margin-bottom:8px">Updated ${updates.length} base SKU${updates.length!==1?'s':''} from ${matched.length} matched listing${matched.length!==1?'s':''}.</div>`;
     html += `<table style="width:100%;border-collapse:collapse;font-size:12px;margin-bottom:8px"><thead><tr>
-      ${['Base SKU','Product','Was','Now','Change'].map(h=>`<th style="text-align:${['Was','Now','Change'].includes(h)?'right':'left'};padding:4px 6px;font-size:10px;color:var(--text-secondary);border-bottom:0.5px solid var(--border-light);text-transform:uppercase">${h}</th>`).join('')}
+      ${['Base SKU','Product','Was','Now','Change','Source listing'].map(h=>`<th style="text-align:${['Was','Now','Change'].includes(h)?'right':'left'};padding:4px 6px;font-size:10px;color:var(--text-secondary);border-bottom:0.5px solid var(--border-light);text-transform:uppercase">${h}</th>`).join('')}
     </tr></thead><tbody>`;
     updates.forEach(u => {
       const diff = u.new - u.old;
@@ -1710,6 +1719,7 @@ function importEbayCsv() {
         <td style="padding:5px 6px;border-bottom:0.5px solid var(--border-light);text-align:right">${u.old}</td>
         <td style="padding:5px 6px;border-bottom:0.5px solid var(--border-light);text-align:right;font-weight:500">${u.new}</td>
         <td style="padding:5px 6px;border-bottom:0.5px solid var(--border-light);text-align:right;color:${diffColor};font-weight:500">${diffStr}</td>
+        <td style="padding:5px 6px;border-bottom:0.5px solid var(--border-light);font-family:var(--mono);font-size:11px;color:var(--text-hint)">${u.sourceSku||''}</td>
       </tr>`;
     });
     html += `</tbody></table>`;
