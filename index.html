@@ -306,6 +306,7 @@ code{font-family:var(--mono);font-size:12px;background:var(--bg-secondary);paddi
       <textarea id="orders-csv-paste" placeholder="Paste Seller Hub orders CSV here..." style="min-height:80px;margin-bottom:8px"></textarea>
       <div class="flex">
         <button class="btn btn-primary btn-sm" onclick="importOrdersCsv()">Import sales history</button>
+        <button class="btn btn-secondary btn-sm" onclick="clearAllSeeds()">Clear seed estimates</button>
         <span id="orders-csv-status" style="font-size:12px;color:var(--text-secondary)"></span>
       </div>
       <div id="orders-csv-preview" style="margin-top:10px"></div>
@@ -492,12 +493,26 @@ function postageForSku(sku) {
 // ══════════════════════════════════════════════
 const DAY_MS = 86400000;
 
-function velocityWindow(baseCode, days) {
-  const cutoff = Date.now() - days * DAY_MS;
-  const total = sales
-    .filter(s => s.baseCode === baseCode && s.date >= cutoff)
-    .reduce((a, b) => a + (b.baseUnits || 0), 0);
-  return total / days;
+// Returns the oldest real (non-seed) sale date across ALL bases, or null
+function oldestRealSaleDate() {
+  const realSales = sales.filter(s => !s._seeded);
+  if (!realSales.length) return null;
+  return Math.min(...realSales.map(s => s.date));
+}
+
+// Velocity: sum units in window / ACTUAL coverage days (not fixed window size).
+// This prevents artificial deflation when real data covers less than the window.
+// e.g. if you only have 89 days of orders, vel365 divides by 89 not 365.
+function velocityWindow(baseCode, maxDays) {
+  const now = Date.now();
+  const cutoff = now - maxDays * DAY_MS;
+  const inWindow = sales.filter(s => s.baseCode === baseCode && s.date >= cutoff);
+  if (!inWindow.length) return 0;
+  const total = inWindow.reduce((a, b) => a + (b.baseUnits || 0), 0);
+  // Effective coverage = days from oldest sale in window to now, min 1
+  const oldest = Math.min(...inWindow.map(s => s.date));
+  const coverageDays = Math.max(1, Math.min(maxDays, (now - oldest) / DAY_MS));
+  return total / coverageDays;
 }
 
 // Returns true if ALL sales for this base within a window are seeds
@@ -510,7 +525,7 @@ function isSeedOnly(baseCode, days) {
 function velocity90(baseCode)  { return velocityWindow(baseCode, 90); }
 function velocity365(baseCode) { return velocityWindow(baseCode, 365); }
 
-// Reorder point is always based on 365-day velocity — stable for slow movers
+// Reorder point uses 365-day velocity — stable for slow movers
 function reorderPoint(baseCode) {
   const vel = velocity365(baseCode);
   return vel > 0 ? Math.ceil(vel * 70) : null;
@@ -1167,11 +1182,23 @@ function importOrdersCsv() {
     previewEl.innerHTML = ''; return;
   }
 
-  // Remove seeds for base codes that now have real data, keep all non-seed sales
-  const affectedBases = new Set(newSales.map(s => s.baseCode));
-  sales = sales.filter(s => !(s._seeded && affectedBases.has(s.baseCode)));
-  // Remove any previous orders-csv entries for the same bases (re-import is safe)
-  sales = sales.filter(s => !(s._fromOrdersCsv && affectedBases.has(s.baseCode)));
+  // Collect ALL base codes touched by any matched listing — even those with 0 orders
+  // in this CSV (e.g. CS, SMA). Their seeds must also be removed so they show
+  // honest zero velocity rather than seed-inflated numbers.
+  const allMatchedListings = rows
+    .map(({rawSku, rawTitle}) => {
+      const normSku = normalizeSku(rawSku);
+      return listings.find(l => l.sku === normSku || l.sku === rawSku) ||
+             (rawTitle ? listings.find(l => l.label.toLowerCase().split(' ').filter(w=>w.length>3).some(w=>rawTitle.toLowerCase().includes(w))) : null);
+    })
+    .filter(Boolean);
+  const allAffectedBases = new Set([
+    ...newSales.map(s => s.baseCode),
+    ...allMatchedListings.flatMap(l => l.components.map(c => c.base))
+  ]);
+  // Remove ALL seeds for affected bases and any prior orders-csv entries
+  sales = sales.filter(s => !(s._seeded && allAffectedBases.has(s.baseCode)));
+  sales = sales.filter(s => !(s._fromOrdersCsv && allAffectedBases.has(s.baseCode)));
   sales.push(...newSales);
 
   save();
@@ -1217,6 +1244,20 @@ function importOrdersCsv() {
 
   previewEl.innerHTML = html;
   statusEl.textContent = '';
+  if (document.getElementById('panel-stock').classList.contains('active')) renderStock();
+}
+
+// ══════════════════════════════════════════════
+// CLEAR ALL SEEDS
+// ══════════════════════════════════════════════
+function clearAllSeeds() {
+  const seedCount = sales.filter(s => s._seeded).length;
+  if (!seedCount) { alert('No seed estimates found in your sales data.'); return; }
+  if (!confirm(`Remove ${seedCount} seed estimate entries? SKUs with no real order history will show zero velocity until you import orders.`)) return;
+  sales = sales.filter(s => !s._seeded);
+  save();
+  const s = document.getElementById('orders-csv-status');
+  s.innerHTML = `<span style="color:#27500A">✓ Removed ${seedCount} seed entries. Velocity now reflects real orders only.</span>`;
   if (document.getElementById('panel-stock').classList.contains('active')) renderStock();
 }
 
