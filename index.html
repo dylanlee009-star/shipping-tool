@@ -20,7 +20,7 @@
 }
 *{box-sizing:border-box;margin:0;padding:0}
 body{font-family:var(--font);background:var(--bg-secondary);color:var(--text-primary);min-height:100vh}
-.app{max-width:1140px;margin:0 auto;padding:1.25rem 1rem}
+.app{max-width:1200px;margin:0 auto;padding:1.25rem 1rem}
 .app-header{display:flex;align-items:center;justify-content:space-between;margin-bottom:1.5rem;flex-wrap:wrap;gap:8px}
 .app-title{font-size:16px;font-weight:500;color:var(--text-primary)}
 .ebay-status{font-size:12px;padding:4px 10px;border-radius:20px;font-weight:500}
@@ -103,6 +103,12 @@ textarea{resize:vertical;min-height:80px;font-family:var(--mono);font-size:12px}
 .step-body strong{color:var(--text-primary);font-weight:500}
 code{font-family:var(--mono);font-size:12px;background:var(--bg-secondary);padding:2px 6px;border-radius:4px}
 .code-block{font-family:var(--mono);font-size:12px;background:var(--bg-secondary);padding:10px 12px;border-radius:var(--radius-md);word-break:break-all;margin:6px 0;line-height:1.6}
+/* postage override table */
+.postage-table{width:100%;border-collapse:collapse;font-size:12px}
+.postage-table th{font-size:10px;font-weight:500;color:var(--text-secondary);padding:5px 8px;border-bottom:0.5px solid var(--border-light);text-transform:uppercase;letter-spacing:.05em;text-align:left}
+.postage-table td{padding:5px 8px;border-bottom:0.5px solid var(--border-light);vertical-align:middle}
+.postage-table tr:last-child td{border-bottom:none}
+.postage-table input[type=number]{width:80px;padding:4px 7px;font-size:12px}
 </style>
 </head>
 <body>
@@ -272,15 +278,25 @@ code{font-family:var(--mono);font-size:12px;background:var(--bg-secondary);paddi
     </div>
 
     <div class="card">
-      <div class="sec">Profitability settings</div>
+      <div class="sec">Profitability settings — defaults</div>
       <div class="row3">
-        <div><label>Postage cost per order (AUD)</label><input id="cfg-postage-cost" type="number" step="0.01" placeholder="9.50"/></div>
+        <div><label>Default postage cost per order (AUD)</label><input id="cfg-postage-cost" type="number" step="0.01" placeholder="9.50"/></div>
         <div><label>Packaging cost per order (AUD)</label><input id="cfg-packaging-cost" type="number" step="0.01" placeholder="0.90"/></div>
         <div><label>eBay FVF fallback % <span style="font-weight:400;color:var(--text-hint)">(if Finances API unavailable)</span></label><input id="cfg-fvf-pct" type="number" step="0.1" placeholder="13.0"/></div>
       </div>
-      <p style="font-size:12px;color:var(--text-secondary);margin-top:4px">Used in Profitability tab. Real FVF is pulled from eBay Finances API when available (requires re-auth with sell.finances scope).</p>
-      <button class="btn btn-primary btn-sm" style="margin-top:10px" onclick="saveProfitSettings()">Save</button>
+      <p style="font-size:12px;color:var(--text-secondary);margin-top:4px">Used in Profitability tab. Per-SKU postage overrides below take priority. Real FVF is pulled from eBay Finances API when available.</p>
+      <button class="btn btn-primary btn-sm" style="margin-top:10px" onclick="saveProfitSettings()">Save defaults</button>
       <span id="profit-cfg-saved" style="font-size:12px;color:var(--text-secondary);margin-left:10px;display:none">Saved.</span>
+    </div>
+
+    <div class="card">
+      <div class="sec">Per-SKU postage cost overrides</div>
+      <p style="font-size:13px;color:var(--text-secondary);margin-bottom:12px">
+        Set a custom postage cost for individual listing SKUs (e.g. stamp-based items). Leave blank to use the default above.
+      </p>
+      <div id="postage-override-table"></div>
+      <button class="btn btn-primary btn-sm" style="margin-top:12px" onclick="savePostageOverrides()">Save overrides</button>
+      <span id="postage-override-saved" style="font-size:12px;color:var(--text-secondary);margin-left:10px;display:none">Saved.</span>
     </div>
 
     <div class="card">
@@ -417,15 +433,15 @@ let orders   = JSON.parse(localStorage.getItem('ap3_orders')   || '[]');
 let sales    = JSON.parse(localStorage.getItem('ap3_sales')    || 'null');
 let cfg      = JSON.parse(localStorage.getItem('ap3_cfg')      || '{}');
 let ebayToken= localStorage.getItem('ebay_access_token') || '';
-// Track which eBay order IDs have already been auto-deducted from stock
 let deductedOrderIds = JSON.parse(localStorage.getItem('ap3_deducted_orders') || '[]');
-// Cache for fetched eBay fees: {orderId: feeAmount}
 let ebayFees = JSON.parse(localStorage.getItem('ap3_ebay_fees') || '{}');
-// Cache for eBay order revenues: {orderId: {sku, revenue, qty}}
 let ebayRevenue = JSON.parse(localStorage.getItem('ap3_ebay_revenue') || '{}');
 
 // Profit settings
 let profitCfg = JSON.parse(localStorage.getItem('ap3_profit_cfg') || '{"postageCost":9.50,"packagingCost":0.90,"fvfPct":13.0}');
+
+// Per-SKU postage cost overrides: {sku: costAUD}
+let postageOverrides = JSON.parse(localStorage.getItem('ap3_postage_overrides') || '{}');
 
 // Seed velocity if first run
 if (!sales) { sales = buildSeedSales(); localStorage.setItem('ap3_sales', JSON.stringify(sales)); }
@@ -456,6 +472,14 @@ function save() {
   localStorage.setItem('ap3_ebay_revenue', JSON.stringify(ebayRevenue));
 }
 
+// Returns the effective postage cost for a listing SKU
+function postageForSku(sku) {
+  if (postageOverrides[sku] !== undefined && postageOverrides[sku] !== '') {
+    return parseFloat(postageOverrides[sku]);
+  }
+  return parseFloat(profitCfg.postageCost) || 9.50;
+}
+
 // ══════════════════════════════════════════════
 // TABS
 // ══════════════════════════════════════════════
@@ -468,7 +492,7 @@ function showTab(t) {
   if(t==='ebay')   initEbayPanel();
   if(t==='queue')  { renderQueue(); populateOrderDrop(); }
   if(t==='profit') renderProfit();
-  if(t==='settings') { loadSettings(); loadProfitSettings(); populateAdjBase(); }
+  if(t==='settings') { loadSettings(); loadProfitSettings(); populateAdjBase(); renderPostageOverrideTable(); }
 }
 TAB_NAMES.forEach((n,i) => { document.getElementById('panel-'+n).style.display = i===0?'block':'none'; });
 updateEbayBadge();
@@ -745,14 +769,12 @@ async function fetchOrders(mode) {
     const ebayOrders=data.orders||[];
     status.innerHTML=`${ebayOrders.length} order${ebayOrders.length!==1?'s':''} found`;
     if(!ebayOrders.length){list.innerHTML='<div class="empty">No orders found.</div>';return;}
-    // Auto-deduct stock from new orders
     const deductResult = autoDeductFromOrders(ebayOrders);
     if(deductResult.newCount>0){
       deductStatus.innerHTML=`<span style="color:#27500A">✓ Auto-deducted stock for ${deductResult.newCount} new order${deductResult.newCount!==1?'s':''}${deductResult.skipped>0?' ('+deductResult.skipped+' already recorded)':''}</span>`;
     } else {
       deductStatus.innerHTML=`<span style="color:var(--text-hint)">No new orders to deduct (${deductResult.skipped} already recorded)</span>`;
     }
-    // Store revenue data for profitability
     storeOrderRevenue(ebayOrders);
     renderEbayOrders(ebayOrders);
     save();
@@ -762,7 +784,6 @@ async function fetchOrders(mode) {
   }
 }
 
-// Auto-deduct stock when orders are fetched (deduplicated by order ID)
 function autoDeductFromOrders(ebayOrders) {
   let newCount=0, skipped=0;
   ebayOrders.forEach(o=>{
@@ -794,7 +815,6 @@ function autoDeductFromOrders(ebayOrders) {
   return {newCount, skipped};
 }
 
-// Store revenue per listing SKU from eBay orders for profitability
 function storeOrderRevenue(ebayOrders) {
   ebayOrders.forEach(o=>{
     const orderId=o.orderId||'';
@@ -830,7 +850,6 @@ function loadManualJson() {
   } catch(e){alert('Invalid JSON: '+e.message);}
 }
 
-// Map eBay SKU to our listing SKU
 function normalizeSku(raw) {
   if(!raw) return '';
   let s=raw.trim();
@@ -928,7 +947,6 @@ async function fetchEbayFee(orderId) {
     });
     if(!res.ok) return null;
     const data=await res.json();
-    // Sum all fee amounts from transactions
     let totalFee=0;
     const txns=data.transactions||[];
     txns.forEach(t=>{
@@ -938,7 +956,6 @@ async function fetchEbayFee(orderId) {
           const feeAmt=parseFloat(li.totalFeeAmount?.value||0);
           totalFee+=feeAmt;
         });
-        // Also check top-level totalFeeAmount
         if(t.totalFeeAmount?.value) totalFee=Math.max(totalFee, parseFloat(t.totalFeeAmount.value));
       }
     });
@@ -958,17 +975,28 @@ function cogsForListing(l) {
   },0);
 }
 
+// Compute avg qty per order for a listing SKU from stored ebayRevenue
+function avgQtyPerOrder(sku) {
+  let totalQty = 0, orderCount = 0;
+  Object.values(ebayRevenue).forEach(orderItems => {
+    if (orderItems[sku]) {
+      totalQty += orderItems[sku].qty;
+      orderCount++;
+    }
+  });
+  if (!orderCount) return null;
+  return totalQty / orderCount;
+}
+
 function renderProfit() {
   const container=document.getElementById('profit-content');
   container.innerHTML='<div class="empty"><span class="spinner"></span> Calculating...</div>';
 
-  // Build per-listing profit data using stored revenue + sales velocity
-  const postageCost=parseFloat(profitCfg.postageCost)||9.50;
   const packagingCost=parseFloat(profitCfg.packagingCost)||0.90;
   const fvfPct=(parseFloat(profitCfg.fvfPct)||13.0)/100;
-  const fixedFeePerOrder=0.30; // eBay fixed fee per order AUD
+  const fixedFeePerOrder=0.30;
 
-  // Aggregate revenue per listing SKU from stored ebayRevenue
+  // Aggregate revenue per listing SKU
   const skuRevenue={}; // {sku: {totalRevenue, totalQty, orderCount}}
   Object.values(ebayRevenue).forEach(orderItems=>{
     Object.entries(orderItems).forEach(([sku,data])=>{
@@ -986,23 +1014,28 @@ function renderProfit() {
     const avgRevenue=rev&&rev.totalQty>0?rev.totalRevenue/rev.totalQty:null;
     const fvf=avgRevenue?avgRevenue*fvfPct+fixedFeePerOrder/Math.max(rev.orderCount,1):null;
 
+    // Avg qty per order for this SKU
+    const avgQty = rev && rev.orderCount > 0 ? rev.totalQty / rev.orderCount : null;
+
+    // Per-SKU postage override
+    const postageCost = postageForSku(l.sku);
+    const hasOverride = postageOverrides[l.sku] !== undefined && postageOverrides[l.sku] !== '';
+
     // Use velocity of primary base to estimate monthly units sold
     const primaryBase=l.components[0]?.base;
     const vel=primaryBase?velocity(primaryBase):0;
-    // Scale velocity by component qty ratio to get listing-level velocity
     const primaryQty=l.components[0]?.qty||1;
-    const listingVel=vel/primaryQty; // listings per day for this SKU
+    const listingVel=vel/primaryQty;
     const monthlyUnits=listingVel*30;
 
-    const totalCostPerUnit=cogs+postageCost+packagingCost+(fvf||( avgRevenue?avgRevenue*fvfPct+fixedFeePerOrder:0));
+    const totalCostPerUnit=cogs+postageCost+packagingCost+(fvf||(avgRevenue?avgRevenue*fvfPct+fixedFeePerOrder:0));
     const grossMargin=avgRevenue?avgRevenue-totalCostPerUnit:null;
     const marginPct=avgRevenue&&grossMargin!==null?grossMargin/avgRevenue*100:null;
     const monthlyProfit=grossMargin!==null?grossMargin*monthlyUnits:null;
 
-    return {l, cogs, avgRevenue, fvf, postageCost, packagingCost, totalCostPerUnit, grossMargin, marginPct, monthlyUnits, monthlyProfit, hasRevData:!!rev};
+    return {l, cogs, avgRevenue, avgQty, fvf, postageCost, hasOverride, packagingCost, totalCostPerUnit, grossMargin, marginPct, monthlyUnits, monthlyProfit, hasRevData:!!rev};
   });
 
-  // Overall monthly summary (only rows with data)
   const rowsWithData=rows.filter(r=>r.hasRevData&&r.grossMargin!==null);
   const totalMonthlyRevenue=rowsWithData.reduce((s,r)=>s+r.avgRevenue*r.monthlyUnits,0);
   const totalMonthlyCOGS=rowsWithData.reduce((s,r)=>s+r.cogs*r.monthlyUnits,0);
@@ -1014,7 +1047,6 @@ function renderProfit() {
   const hasAnyRevData=rowsWithData.length>0;
   const hasFinancesScope=ebayToken&&localStorage.getItem('ebay_refresh_token');
 
-  // Sort by margin % descending for ranking
   const ranked=[...rowsWithData].sort((a,b)=>(b.marginPct||0)-(a.marginPct||0));
 
   const fmt=(n,dp=2)=>n!==null&&!isNaN(n)?'$'+Math.abs(n).toFixed(dp):'-';
@@ -1022,7 +1054,6 @@ function renderProfit() {
 
   let html='';
 
-  // Data source notice
   if(!hasAnyRevData){
     html+=`<div class="alert a-info" style="margin-bottom:1rem">
       <strong>No revenue data yet.</strong> Fetch your eBay orders from the eBay Orders tab to populate profitability. Costs (COGS, postage, packaging) are pre-loaded from your records.
@@ -1037,7 +1068,6 @@ function renderProfit() {
     </div>`;
   }
 
-  // Summary stats
   if(hasAnyRevData){
     const overallMarginPct=totalMonthlyRevenue>0?totalMonthlyProfit/totalMonthlyRevenue*100:0;
     html+=`<div class="stat-grid-5" style="margin-bottom:1.5rem">
@@ -1048,7 +1078,6 @@ function renderProfit() {
       <div class="stat"><div class="stat-label">Overall margin</div><div class="stat-value" style="color:${overallMarginPct>=20?'#27500A':overallMarginPct>=0?'#633806':'#A32D2D'}">${fmtPct(overallMarginPct)}</div></div>
     </div>`;
 
-    // Best/worst
     if(ranked.length>=2){
       html+=`<div class="row" style="margin-bottom:1rem">
         <div class="card" style="margin-bottom:0;border-left:3px solid #639922">
@@ -1073,7 +1102,7 @@ function renderProfit() {
     }
   }
 
-  // Full SKU breakdown table
+  // Full SKU breakdown table — now includes Avg qty/order and postage override indicator
   html+=`<div class="card">
     <div class="sec">Per-listing breakdown</div>
     <div style="overflow-x:auto">
@@ -1082,6 +1111,7 @@ function renderProfit() {
         <th style="text-align:left">SKU</th>
         <th style="text-align:left">Listing</th>
         <th>Avg sale price</th>
+        <th>Avg qty/order</th>
         <th>COGS</th>
         <th>eBay fees</th>
         <th>Postage</th>
@@ -1097,13 +1127,20 @@ function renderProfit() {
     const marginColor=r.marginPct===null?'var(--text-hint)':r.marginPct>=30?'#27500A':r.marginPct>=15?'#633806':'#A32D2D';
     const marginBarColor=r.marginPct===null?'var(--bg-tertiary)':r.marginPct>=30?'#639922':r.marginPct>=15?'#EF9F27':'#E24B4A';
     const marginBarWidth=r.marginPct!==null?Math.max(0,Math.min(100,r.marginPct)):0;
+    const postageCell=r.hasOverride
+      ? `<span style="color:#0C447C;font-weight:500">${fmt(r.postageCost)}</span> <span style="font-size:10px;color:var(--text-hint)">override</span>`
+      : fmt(r.postageCost);
+    const avgQtyCell=r.avgQty!==null
+      ? `<span style="font-weight:500">${r.avgQty.toFixed(1)}</span>`
+      : `<span style="color:var(--text-hint);font-size:11px">no data</span>`;
     html+=`<tr>
       <td style="text-align:left;white-space:nowrap">${r.l.sku}</td>
-      <td style="text-align:left;font-family:var(--font);font-size:12px;color:var(--text-secondary);max-width:160px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap">${r.l.label}</td>
+      <td style="text-align:left;font-family:var(--font);font-size:12px;color:var(--text-secondary);max-width:140px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap">${r.l.label}</td>
       <td>${r.avgRevenue!==null?fmt(r.avgRevenue):'<span style="color:var(--text-hint);font-size:11px">no data</span>'}</td>
+      <td>${avgQtyCell}</td>
       <td>${fmt(r.cogs)}</td>
-      <td>${r.fvf!==null?fmt(r.fvf):'<span style="color:var(--text-hint);font-size:11px">est. '+(r.avgRevenue!==null?fmt(r.avgRevenue*fvfPct):'—')+'</span>'}</td>
-      <td>${fmt(r.postageCost)}</td>
+      <td>${r.fvf!==null?fmt(r.fvf):'<span style="color:var(--text-hint);font-size:11px">est. '+(r.avgRevenue!==null?fmt(r.avgRevenue*(parseFloat(profitCfg.fvfPct)||13)/100):'—')+'</span>'}</td>
+      <td>${postageCell}</td>
       <td>${fmt(r.packagingCost)}</td>
       <td style="color:${r.grossMargin!==null?(r.grossMargin>=0?'#27500A':'#A32D2D'):'var(--text-hint)'}">${r.grossMargin!==null?(r.grossMargin<0?'-':'')+fmt(r.grossMargin):'—'}</td>
       <td>
@@ -1115,15 +1152,19 @@ function renderProfit() {
     </tr>`;
   });
 
+  const defaultPostage=parseFloat(profitCfg.postageCost)||9.50;
+  const overrideCount=Object.keys(postageOverrides).filter(k=>postageOverrides[k]!==''&&postageOverrides[k]!==undefined).length;
+
   html+=`</tbody></table></div>
 
     <div style="margin-top:12px;font-size:11px;color:var(--text-secondary);line-height:1.8">
       <strong>Notes:</strong>
       COGS from your purchase records (blended landed cost) ·
-      Postage $${postageCost.toFixed(2)} flat per order ·
-      Packaging $${packagingCost.toFixed(2)} per order ·
-      ${hasFinancesScope?'eBay fees from Finances API':'eBay FVF estimated at '+fmtPct(fvfPct*100)+' of sale price'} ·
-      Monthly units = 30-day velocity × 30
+      Default postage $${defaultPostage.toFixed(2)} per order${overrideCount>0?` · <span style="color:#0C447C">${overrideCount} SKU${overrideCount!==1?'s':''} have postage overrides (Settings)</span>`:''} ·
+      Packaging $${(parseFloat(profitCfg.packagingCost)||0.90).toFixed(2)} per order ·
+      ${hasFinancesScope?'eBay fees from Finances API':'eBay FVF estimated at '+(parseFloat(profitCfg.fvfPct)||13).toFixed(1)+'% of sale price'} ·
+      Monthly units = 30-day velocity × 30 ·
+      <strong>Avg qty/order</strong> = average units per eBay transaction
     </div>
   </div>`;
 
@@ -1143,6 +1184,65 @@ function renderProfit() {
   </div>`;
 
   container.innerHTML=html;
+}
+
+// ══════════════════════════════════════════════
+// POSTAGE OVERRIDES — settings table
+// ══════════════════════════════════════════════
+function renderPostageOverrideTable() {
+  const container = document.getElementById('postage-override-table');
+  const defaultCost = parseFloat(profitCfg.postageCost) || 9.50;
+
+  let html = `<table class="postage-table">
+    <thead><tr>
+      <th>SKU</th>
+      <th>Listing</th>
+      <th>Default postage</th>
+      <th style="width:110px">Override (AUD)</th>
+    </tr></thead>
+    <tbody>`;
+
+  listings.forEach(l => {
+    const override = postageOverrides[l.sku];
+    const hasOverride = override !== undefined && override !== '';
+    const safeId = l.sku.replace(/[^a-zA-Z0-9_]/g, '_');
+    html += `<tr>
+      <td style="font-family:var(--mono);font-weight:500;font-size:11px">${l.sku}</td>
+      <td style="color:var(--text-secondary)">${l.label}</td>
+      <td style="color:var(--text-hint)">$${defaultCost.toFixed(2)}</td>
+      <td>
+        <input type="number" id="po_${safeId}" step="0.01" min="0" placeholder="—"
+          value="${hasOverride ? parseFloat(override).toFixed(2) : ''}"
+          style="${hasOverride ? 'border-color:#378ADD;font-weight:500' : ''}">
+      </td>
+    </tr>`;
+  });
+
+  html += `</tbody></table>
+    <p style="font-size:11px;color:var(--text-secondary);margin-top:8px">
+      Leave blank to use the default ($${defaultCost.toFixed(2)}). Overrides are shown in blue in the Profitability tab.
+    </p>`;
+
+  container.innerHTML = html;
+}
+
+function savePostageOverrides() {
+  const newOverrides = {};
+  listings.forEach(l => {
+    const safeId = l.sku.replace(/[^a-zA-Z0-9_]/g, '_');
+    const el = document.getElementById('po_' + safeId);
+    if (el && el.value !== '') {
+      const v = parseFloat(el.value);
+      if (!isNaN(v) && v >= 0) newOverrides[l.sku] = v;
+    }
+  });
+  postageOverrides = newOverrides;
+  localStorage.setItem('ap3_postage_overrides', JSON.stringify(postageOverrides));
+  // Re-render to show updated highlights
+  renderPostageOverrideTable();
+  const s = document.getElementById('postage-override-saved');
+  s.style.display = 'inline';
+  setTimeout(() => s.style.display = 'none', 2000);
 }
 
 // ══════════════════════════════════════════════
@@ -1213,19 +1313,103 @@ function selAll(v){orders.filter(o=>!o.exported).forEach(o=>{const c=document.ge
 function exportCSV() {
   const sel=orders.filter(o=>{if(o.exported)return false;const c=document.getElementById('chk-'+o.id);return c&&c.checked;});
   if(!sel.length){alert('Select at least one order.');return;}
-  const headers=['Row type','Send From Name','Send From Address Line 1','Send From Address Line 2','Send From Address Line 3','Send From Suburb','Send From State','Send From Postcode','Send From Phone','Send From Email','Deliver To Name','Deliver To Address Line 1','Deliver To Address Line 2','Deliver To Address Line 3','Deliver To Suburb','Deliver To State','Deliver To Postcode','Deliver To Email','Deliver To Phone','Label Message 1','Payer account','StarTrack account','Label Message 2','Label Message 3','Product ID','Authority To Leave','Quantity','Weight','Length','Width','Height','References 1','References 2','References 3','Send Tracking Email To Recipient'];
+
+  // MyPost Australia import format — 74 columns, no Row type prefix
+  const headers=[
+    'Send From Name','Send From Business Name','Send From Address Line 1','Send From Address Line 2','Send From Address Line 3',
+    'Send From Suburb','Send From State','Send From Postcode','Send From Phone Number','Send From Email Address',
+    'Deliver To Name','Deliver To MyPost Number','Deliver To Business Name','Deliver To Type Of Address','Deliver To Country',
+    'Deliver To Address Line 1','Deliver To Address Line 2','Deliver To Address Line 3',
+    'Deliver To Suburb','Deliver To State','Deliver To Postcode','Deliver To Phone Number','Deliver To Email Address',
+    'Item Packaging Type','Item Delivery Service','Item Description','Item Length','Item Width','Item Height','Item Weight',
+    'Item Dangerous Goods Flag','Signature On Delivery','Extra Cover Amount',
+    'Cannot Be Delivered - Return To Sender / Abandon Parcel',
+    'Customs Declaration - Commercial Value','Customs Declaration - Reason For Export',
+    'Customs Declaration - Why Are You Exporting These Goods','Export Declaration Number',
+    'SMS Tracking Notifications','SMS Tracking Mobile Phone',
+    'Parcel Contents - Description','Parcel Contents - Weight','Parcel Contents - Value','Parcel Contents - Quantity','Parcel Contents - Country Of Origin','Parcel Contents - HS Tariff',
+    'Parcel 2 Contents - Description','Parcel 2 Contents - Weight','Parcel 2 Contents - Value','Parcel 2 Contents - Quantity','Parcel 2 Contents - Country Of Origin','Parcel 2 Contents - HS Tariff',
+    'Parcel 3 Contents - Description','Parcel 3 Contents - Weight','Parcel 3 Contents - Value','Parcel 3 Contents - Quantity','Parcel 3 Contents - Country Of Origin','Parcel 3 Contents - HS Tariff',
+    'Parcel 4 Contents - Description','Parcel 4 Contents - Weight','Parcel 4 Contents - Value','Parcel 4 Contents - Quantity','Parcel 4 Contents - Country Of Origin','Parcel 4 Contents - HS Tariff',
+    'Send Tracking Notifications','Send Tracking Email','Additional Label Information 1',
+    'Delivery Instructions','Comments',
+    "Sender's Customs Reference","Importer's Reference Number","Licence Numbers","Certificate Numbers","Invoice Numbers"
+  ];
+
   const rows=[headers];
+
   sel.forEach(o=>{
     const l=listings.find(x=>x.sku===o.sku)||{};
-    rows.push(['S',cfg.name||'','\''+( cfg.addr1||''),'','',cfg.suburb||'',cfg.state||'SA','\''+( cfg.postcode||''),'\''+( cfg.phone||''),cfg.email||'',o.name,o.addr1,o.addr2||'','',o.suburb,o.state,'\''+o.postcode,o.email||'','\''+( o.phone||''),o.ref||'','','','','',o.service,o.atl||'NO',o.qty||1,o.weight||l.weightKg||'','','','',o.ref||'','','',o.email?'YES':'NO']);
+    const sigOnDelivery = (o.service==='3D1'||o.service==='XPT'||o.service==='RCP') ? 'Yes' : 'No';
+    const row = [
+      /* 0  Send From Name              */ cfg.name||'',
+      /* 1  Send From Business Name     */ cfg.name||'',
+      /* 2  Send From Address Line 1    */ cfg.addr1||'',
+      /* 3  Send From Address Line 2    */ '',
+      /* 4  Send From Address Line 3    */ '',
+      /* 5  Send From Suburb            */ cfg.suburb||'',
+      /* 6  Send From State             */ cfg.state||'SA',
+      /* 7  Send From Postcode          */ cfg.postcode||'',
+      /* 8  Send From Phone Number      */ cfg.phone||'',
+      /* 9  Send From Email Address     */ cfg.email||'',
+      /* 10 Deliver To Name             */ o.name,
+      /* 11 Deliver To MyPost Number    */ '',
+      /* 12 Deliver To Business Name    */ '',
+      /* 13 Deliver To Type Of Address  */ 'Residential',
+      /* 14 Deliver To Country          */ 'Australia',
+      /* 15 Deliver To Address Line 1   */ o.addr1,
+      /* 16 Deliver To Address Line 2   */ o.addr2||'',
+      /* 17 Deliver To Address Line 3   */ '',
+      /* 18 Deliver To Suburb           */ o.suburb,
+      /* 19 Deliver To State            */ o.state,
+      /* 20 Deliver To Postcode         */ o.postcode,
+      /* 21 Deliver To Phone Number     */ o.phone||'',
+      /* 22 Deliver To Email Address    */ o.email||'',
+      /* 23 Item Packaging Type         */ 'Parcel',
+      /* 24 Item Delivery Service       */ o.service,
+      /* 25 Item Description            */ o.sku||(l.label||'Order'),
+      /* 26 Item Length                 */ '',
+      /* 27 Item Width                  */ '',
+      /* 28 Item Height                 */ '',
+      /* 29 Item Weight                 */ o.weight||l.weightKg||'',
+      /* 30 Item Dangerous Goods Flag   */ 'No',
+      /* 31 Signature On Delivery       */ sigOnDelivery,
+      /* 32 Extra Cover Amount          */ '',
+      /* 33 Cannot Be Delivered         */ 'Return To Sender',
+      /* 34 Customs Declaration Value   */ '',
+      /* 35 Customs Reason For Export   */ '',
+      /* 36 Customs Why Exporting       */ '',
+      /* 37 Export Declaration Number   */ '',
+      /* 38 SMS Tracking Notifications  */ o.phone ? 'Yes' : 'No',
+      /* 39 SMS Tracking Mobile Phone   */ o.phone||'',
+      /* 40 Parcel Contents Description */ '',
+      /* 41 Parcel Contents Weight      */ '',
+      /* 42 Parcel Contents Value       */ '',
+      /* 43 Parcel Contents Quantity    */ '',
+      /* 44 Parcel Contents Country     */ '',
+      /* 45 Parcel Contents HS Tariff   */ '',
+      /* 46-51 Parcel 2 Contents        */ '','','','','','',
+      /* 52-57 Parcel 3 Contents        */ '','','','','','',
+      /* 58-63 Parcel 4 Contents        */ '','','','','','',
+      /* 64 Send Tracking Notifications */ o.email ? 'Yes' : 'No',
+      /* 65 Send Tracking Email         */ o.email||'',
+      /* 66 Additional Label Info 1     */ o.ref||'',
+      /* 67 Delivery Instructions       */ o.atl==='YES' ? 'Authority to leave' : '',
+      /* 68 Comments                    */ '',
+      /* 69 Sender's Customs Reference  */ '',
+      /* 70 Importer's Reference Number */ '',
+      /* 71 Licence Numbers             */ '',
+      /* 72 Certificate Numbers         */ '',
+      /* 73 Invoice Numbers             */ '',
+    ];
+    rows.push(row);
   });
-  const csv=rows.map(r=>r.map(v=>{const s=String(v==null?'':v);return s.includes(',')||s.includes('"')?'"'+s.replace(/"/g,'""')+'"':s;}).join(',')).join('\r\n');
+
+  const csv=rows.map(r=>r.map(v=>{const s=String(v==null?'':v);return s.includes(',')||s.includes('"')||s.includes('\n')?'"'+s.replace(/"/g,'""')+'"':s;}).join(',')).join('\r\n');
   const blob=new Blob([csv],{type:'text/csv;charset=utf-8;'});
   const a=document.createElement('a'); a.href=URL.createObjectURL(blob);
-  const d=new Date(); a.download=`auspost_${d.getFullYear()}${String(d.getMonth()+1).padStart(2,'0')}${String(d.getDate()).padStart(2,'0')}.csv`;
+  const d=new Date(); a.download=`mypost_${d.getFullYear()}${String(d.getMonth()+1).padStart(2,'0')}${String(d.getDate()).padStart(2,'0')}.csv`;
   a.click(); URL.revokeObjectURL(blob);
-  // Note: stock deduction now happens at fetch time, not export time
-  // But we still mark as exported and record revenue if not already done
   sel.forEach(o=>{
     const idx=orders.findIndex(x=>x.id===o.id); if(idx>=0) orders[idx].exported=true;
   });
@@ -1250,9 +1434,12 @@ function saveProfitSettings(){
   };
   localStorage.setItem('ap3_profit_cfg',JSON.stringify(profitCfg));
   const s=document.getElementById('profit-cfg-saved');s.style.display='inline';setTimeout(()=>s.style.display='none',2000);
+  // Re-render override table so default cost label updates
+  renderPostageOverrideTable();
 }
 function populateAdjBase(){const sel=document.getElementById('adj-base');sel.innerHTML='<option value="">— select —</option>'+bases.map(b=>`<option value="${b.code}">${b.code} — ${b.name} (${b.stock})</option>`).join('');}
 function adjustStock(){const code=document.getElementById('adj-base').value;const v=parseInt(document.getElementById('adj-qty').value);if(!code){alert('Select a base SKU.');return;}if(isNaN(v)||v<0){alert('Enter a valid number.');return;}const i=bases.findIndex(b=>b.code===code);if(i>=0){bases[i].stock=v;save();populateAdjBase();alert(`${code} stock updated to ${v}.`);}}
+
 // ══════════════════════════════════════════════
 // EBAY CSV STOCK IMPORT
 // ══════════════════════════════════════════════
@@ -1263,16 +1450,12 @@ function loadEbayCsvFile(e) {
     importEbayCsv();
   };
   r.readAsText(e.target.files[0]);
-  // reset so same file can be re-uploaded
   e.target.value='';
 }
 
 function parseEbayCsv(text) {
-  // Split into lines, handle \r\n and \n
   const lines=text.trim().split(/\r?\n/);
   if(lines.length<2) return null;
-
-  // Parse a CSV line respecting quoted fields
   function parseLine(line) {
     const fields=[];
     let cur='', inQ=false;
@@ -1288,13 +1471,10 @@ function parseEbayCsv(text) {
     fields.push(cur.trim());
     return fields;
   }
-
-  // Find the header row — eBay CSVs sometimes have comment rows at top
   let headerIdx=-1;
   let headers=[];
   for(let i=0;i<Math.min(lines.length,10);i++){
     const f=parseLine(lines[i]);
-    // Look for a row containing both a SKU-like and quantity-like column
     const lower=f.map(x=>x.toLowerCase());
     if(lower.some(x=>x.includes('custom label')||x.includes('sku'))&&
        lower.some(x=>x.includes('available')||x.includes('quantity'))){
@@ -1302,14 +1482,10 @@ function parseEbayCsv(text) {
     }
   }
   if(headerIdx===-1) return null;
-
-  // Find column indices — flexible matching
   const hi=headers.map(h=>h.toLowerCase());
   const skuCol=hi.findIndex(h=>h.includes('custom label')||h==='sku'||h.includes('custom label (sku)'));
   const qtyCol=hi.findIndex(h=>h.includes('available quantity')||h==='available quantity'||h.includes('quantity available')||(h.includes('quantity')&&!h.includes('sold')));
-
   if(skuCol===-1||qtyCol===-1) return null;
-
   const rows=[];
   for(let i=headerIdx+1;i<lines.length;i++){
     if(!lines[i].trim()) continue;
@@ -1326,19 +1502,13 @@ function importEbayCsv() {
   const statusEl=document.getElementById('ebay-csv-status');
   const previewEl=document.getElementById('ebay-csv-preview');
   if(!text){statusEl.textContent='Paste CSV content first.';return;}
-
   const rows=parseEbayCsv(text);
   if(!rows||!rows.length){
     statusEl.innerHTML='<span style="color:#A32D2D">Could not parse CSV — make sure it includes "Custom label (SKU)" and "Available quantity" columns.</span>';
     previewEl.innerHTML='';
     return;
   }
-
-  // For each base SKU, collect the implied stock from each listing that uses it
-  // implied base stock from a listing = listing qty × component qty
-  // We take the MINIMUM implied value across all listings sharing a base (conservative)
-  const baseImplied={}; // {baseCode: [implied values]}
-
+  const baseImplied={};
   const matched=[], unmatched=[];
   rows.forEach(({sku, qty})=>{
     const normSku=normalizeSku(sku)||sku.toUpperCase();
@@ -1346,13 +1516,11 @@ function importEbayCsv() {
     if(!listing){ unmatched.push(sku); return; }
     matched.push({sku:normSku, qty, listing});
     listing.components.forEach(c=>{
-      const implied=qty*c.qty; // base units this listing implies
+      const implied=qty*c.qty;
       if(!baseImplied[c.base]) baseImplied[c.base]=[];
       baseImplied[c.base].push(implied);
     });
   });
-
-  // Apply to bases — use minimum implied value (most conservative)
   const updates=[];
   Object.entries(baseImplied).forEach(([baseCode, values])=>{
     const minVal=Math.min(...values);
@@ -1363,10 +1531,7 @@ function importEbayCsv() {
       updates.push({code:baseCode, name:bases[bi].name, old:oldStock, new:minVal});
     }
   });
-
   save();
-
-  // Build preview table
   let html='';
   if(updates.length){
     html+=`<div class="alert a-good" style="margin-bottom:8px">Updated ${updates.length} base SKU${updates.length!==1?'s':''} from ${matched.length} matched listing${matched.length!==1?'s':''}.</div>`;
@@ -1397,12 +1562,39 @@ function importEbayCsv() {
   }
   previewEl.innerHTML=html;
   statusEl.textContent='';
-  // Refresh stock view if it's visible
   if(document.getElementById('panel-stock').classList.contains('active')) renderStock();
 }
 
-function exportBackup(){const cleanSales=sales.filter(s=>!s._seeded);const blob=new Blob([JSON.stringify({bases,listings,orders,sales:cleanSales,cfg,profitCfg,ebayFees,ebayRevenue,deductedOrderIds},null,2)],{type:'application/json'});const a=document.createElement('a');a.href=URL.createObjectURL(blob);a.download='auspost_backup.json';a.click();}
-function importBackup(e){const r=new FileReader();r.onload=ev=>{try{const d=JSON.parse(ev.target.result);if(d.bases)bases=d.bases;if(d.listings)listings=d.listings;if(d.orders)orders=d.orders;if(d.sales)sales=d.sales;if(d.cfg)cfg=d.cfg;if(d.profitCfg)profitCfg=d.profitCfg;if(d.ebayFees)ebayFees=d.ebayFees;if(d.ebayRevenue)ebayRevenue=d.ebayRevenue;if(d.deductedOrderIds)deductedOrderIds=d.deductedOrderIds;save();localStorage.setItem('ap3_cfg',JSON.stringify(cfg));localStorage.setItem('ap3_profit_cfg',JSON.stringify(profitCfg));alert('Imported successfully.');renderStock();}catch(err){alert('Invalid backup file.');}};r.readAsText(e.target.files[0]);}
+function exportBackup(){
+  const cleanSales=sales.filter(s=>!s._seeded);
+  const blob=new Blob([JSON.stringify({bases,listings,orders,sales:cleanSales,cfg,profitCfg,postageOverrides,ebayFees,ebayRevenue,deductedOrderIds},null,2)],{type:'application/json'});
+  const a=document.createElement('a');a.href=URL.createObjectURL(blob);a.download='auspost_backup.json';a.click();
+}
+function importBackup(e){
+  const r=new FileReader();
+  r.onload=ev=>{
+    try{
+      const d=JSON.parse(ev.target.result);
+      if(d.bases)bases=d.bases;
+      if(d.listings)listings=d.listings;
+      if(d.orders)orders=d.orders;
+      if(d.sales)sales=d.sales;
+      if(d.cfg)cfg=d.cfg;
+      if(d.profitCfg)profitCfg=d.profitCfg;
+      if(d.postageOverrides)postageOverrides=d.postageOverrides;
+      if(d.ebayFees)ebayFees=d.ebayFees;
+      if(d.ebayRevenue)ebayRevenue=d.ebayRevenue;
+      if(d.deductedOrderIds)deductedOrderIds=d.deductedOrderIds;
+      save();
+      localStorage.setItem('ap3_cfg',JSON.stringify(cfg));
+      localStorage.setItem('ap3_profit_cfg',JSON.stringify(profitCfg));
+      localStorage.setItem('ap3_postage_overrides',JSON.stringify(postageOverrides));
+      alert('Imported successfully.');
+      renderStock();
+    }catch(err){alert('Invalid backup file.');}
+  };
+  r.readAsText(e.target.files[0]);
+}
 
 // ══════════════════════════════════════════════
 // INIT
