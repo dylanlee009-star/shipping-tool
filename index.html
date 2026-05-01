@@ -1207,9 +1207,12 @@ function importOrdersCsv() {
     ...newSales.map(s => s.baseCode),
     ...allMatchedListings.flatMap(l => l.components.map(c => c.base))
   ]);
-  // Remove ALL seeds for affected bases and any prior orders-csv entries
+  // Remove ALL seeds for affected bases
   sales = sales.filter(s => !(s._seeded && allAffectedBases.has(s.baseCode)));
-  sales = sales.filter(s => !(s._fromOrdersCsv && allAffectedBases.has(s.baseCode)));
+  // Remove ALL prior orders-CSV entries globally — a re-import always supersedes everything.
+  // Scoping to affectedBases caused double-counting when two overlapping CSVs were imported
+  // (e.g. Jan-Apr import followed by Feb-May import: the Feb-Apr overlap was counted twice).
+  sales = sales.filter(s => !s._fromOrdersCsv);
   sales.push(...newSales);
 
   save();
@@ -1263,12 +1266,14 @@ function importOrdersCsv() {
 // ══════════════════════════════════════════════
 function clearAllSeeds() {
   const seedCount = sales.filter(s => s._seeded).length;
-  if (!seedCount) { alert('No seed estimates found in your sales data.'); return; }
-  if (!confirm(`Remove ${seedCount} seed estimate entries? SKUs with no real order history will show zero velocity until you import orders.`)) return;
-  sales = sales.filter(s => !s._seeded);
+  const csvCount  = sales.filter(s => s._fromOrdersCsv).length;
+  const total = seedCount + csvCount;
+  if (!total) { alert('No seed or imported order entries found.'); return; }
+  if (!confirm(`Reset all velocity data? This will remove ${seedCount} seed entries and ${csvCount} imported order entries. Re-import your orders CSV after this to restore real velocity.`)) return;
+  sales = sales.filter(s => !s._seeded && !s._fromOrdersCsv);
   save();
   const s = document.getElementById('orders-csv-status');
-  s.innerHTML = `<span style="color:#27500A">✓ Removed ${seedCount} seed entries. Velocity now reflects real orders only.</span>`;
+  s.innerHTML = `<span style="color:#27500A">✓ Cleared ${total} entries (${seedCount} seeds + ${csvCount} imported). Re-import your orders CSV now.</span>`;
   if (document.getElementById('panel-stock').classList.contains('active')) renderStock();
 }
 
