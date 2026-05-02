@@ -321,7 +321,12 @@ code{font-family:var(--mono);font-size:12px;background:var(--bg-secondary);paddi
       </div>
     </div>
 
-    <div class="card">
+              <div class="card">
+            <div class="sec">Sync stock from eBay API</div>
+            <p style="font-size:13px;color:var(--text-secondary);margin-bottom:10px">Pull live listing quantities from eBay. Requires sell.inventory scope.</p>
+            <button class="btn" id="btnSyncInventory" onclick="fetchInventoryFromEbay()">Sync stock from eBay</button>
+          </div>
+<div class="card">
       <div class="sec">Import stock from eBay listing report</div>
       <p style="font-size:13px;color:var(--text-secondary);margin-bottom:10px">
         Download your active listings from
@@ -756,7 +761,7 @@ const EBAY_SCOPES = [
   'https://api.ebay.com/oauth/api_scope',
   'https://api.ebay.com/oauth/api_scope/sell.fulfillment.readonly',
   'https://api.ebay.com/oauth/api_scope/sell.fulfillment',
-  'https://api.ebay.com/oauth/api_scope/sell.finances'
+  'https://api.ebay.com/oauth/api_scope/sell.finances%20https://api.ebay.com/oauth/api_scope/sell.inventory%20https://api.ebay.com/oauth/api_scope/sell.inventory.readonly'
 ].join(' ');
 
 let authUrlStr = '';
@@ -900,7 +905,45 @@ async function fetchOrders(mode) {
   }
 }
 
-function autoDeductFromOrders(ebayOrders) {
+
+    async function fetchInventoryFromEbay() {
+      const creds = loadEbayCreds();
+      if (!creds || !creds.access_token) { alert("Connect eBay first"); return; }
+      const btn = document.getElementById("btnSyncInventory");
+      if (btn) { btn.disabled = true; btn.textContent = "Syncing..."; }
+      try {
+        await refreshAccessToken();
+        const updatedCreds = loadEbayCreds();
+        const token = updatedCreds.access_token;
+        const WORKER = "https://shippingtool.dylanlee009.workers.dev";
+        let allItems = [], offset = 0, hasMore = true;
+        while (hasMore) {
+          const res = await fetch(WORKER + "/inventory?limit=100&offset=" + offset, { headers: { "Authorization": "Bearer " + token } });
+          if (!res.ok) { if (res.status === 403 || res.status === 401) { alert("Inventory scope not authorised. Re-authenticate via eBay Orders tab."); return; } break; }
+          const data = await res.json(); const items = data.inventoryItems || []; allItems = allItems.concat(items);
+          if (items.length < 100) { hasMore = false; } else { offset += 100; }
+        }
+        let allOffers = []; offset = 0; hasMore = true;
+        while (hasMore) {
+          const res = await fetch(WORKER + "/offers?limit=200&offset=" + offset, { headers: { "Authorization": "Bearer " + token } });
+          if (!res.ok) break; const data = await res.json(); const offers = data.offers || []; allOffers = allOffers.concat(offers);
+          if (offers.length < 200) { hasMore = false; } else { offset += 200; }
+        }
+        const skuQtyMap = {};
+        allItems.forEach(function(item) { const av = item.availability; const qty = av && av.shipToLocationAvailability ? av.shipToLocationAvailability.quantity : undefined; if (item.sku && typeof qty === "number") skuQtyMap[normalizeSku(item.sku)] = qty; });
+        allOffers.forEach(function(offer) { if (offer.sku && typeof offer.availableQuantity === "number") skuQtyMap[normalizeSku(offer.sku)] = offer.availableQuantity; });
+        if (Object.keys(skuQtyMap).length === 0) { alert("No inventory data returned. Use CSV import as fallback."); return; }
+        const baseImplied = {};
+        listings.forEach(function(listing) { const lsku = normalizeSku(listing.sku); const eq = skuQtyMap[lsku]; if (typeof eq !== "number") return; (listing.components || []).forEach(function(c) { if (!baseImplied[c.base]) baseImplied[c.base] = []; baseImplied[c.base].push(eq * c.qty); }); });
+        let updatedCount = 0;
+        bases.forEach(function(base) { const imp = baseImplied[base.code]; if (imp && imp.length > 0) { const ns = Math.max.apply(null, imp); if (ns !== base.stock) { base.stock = ns; updatedCount++; } } });
+        save("bases"); renderStock();
+        alert("eBay inventory sync complete! " + Object.keys(skuQtyMap).length + " SKUs found, " + Object.keys(baseImplied).length + " bases mapped, " + updatedCount + " updated");
+      } catch (err) { alert("Inventory sync failed: " + err.message);
+      } finally { if (btn) { btn.disabled = false; btn.textContent = "Sync stock from eBay"; } }
+    }
+
+    function autoDeductFromOrders(ebayOrders) {
   let newCount = 0, skipped = 0;
   ebayOrders.forEach(o => {
     const orderId = o.orderId || '';
