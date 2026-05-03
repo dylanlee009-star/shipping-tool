@@ -907,38 +907,49 @@ async function fetchOrders(mode) {
 
 
     async function fetchInventoryFromEbay() {
-      const creds = loadEbayCreds();
-      if (!creds || !creds.access_token) { alert("Connect eBay first"); return; }
+      if (!ebayToken) { alert("Connect eBay first"); return; }
       const btn = document.getElementById("btnSyncInventory");
       if (btn) { btn.disabled = true; btn.textContent = "Syncing..."; }
       try {
         await refreshAccessToken();
-        const updatedCreds = loadEbayCreds();
-        const token = updatedCreds.access_token;
+        const token = ebayToken;
         const WORKER = "https://shippingtool.dylanlee009.workers.dev";
-        let allItems = [], offset = 0, hasMore = true;
-        while (hasMore) {
-          const res = await fetch(WORKER + "/inventory?limit=100&offset=" + offset, { headers: { "Authorization": "Bearer " + token } });
-          if (!res.ok) { if (res.status === 403 || res.status === 401) { alert("Inventory scope not authorised. Re-authenticate via eBay Orders tab."); return; } break; }
-          const data = await res.json(); const items = data.inventoryItems || []; allItems = allItems.concat(items);
-          if (items.length < 100) { hasMore = false; } else { offset += 100; }
-        }
-        let allOffers = []; offset = 0; hasMore = true;
-        while (hasMore) {
-          const res = await fetch(WORKER + "/offers?limit=200&offset=" + offset, { headers: { "Authorization": "Bearer " + token } });
-          if (!res.ok) break; const data = await res.json(); const offers = data.offers || []; allOffers = allOffers.concat(offers);
-          if (offers.length < 200) { hasMore = false; } else { offset += 200; }
+        let allItems = [], page = 1, totalPages = 1;
+        while (page <= totalPages) {
+          const res = await fetch(WORKER + "/trading/active?page=" + page + "&perPage=200", { headers: { "Authorization": "Bearer " + token } });
+          if (!res.ok) { alert("Trading API error: " + res.status); return; }
+          const data = await res.json();
+          totalPages = data.totalPages || 1;
+          allItems = allItems.concat(data.items || []);
+          page++;
         }
         const skuQtyMap = {};
-        allItems.forEach(function(item) { const av = item.availability; const qty = av && av.shipToLocationAvailability ? av.shipToLocationAvailability.quantity : undefined; if (item.sku && typeof qty === "number") skuQtyMap[normalizeSku(item.sku)] = qty; });
-        allOffers.forEach(function(offer) { if (offer.sku && typeof offer.availableQuantity === "number") skuQtyMap[normalizeSku(offer.sku)] = offer.availableQuantity; });
-        if (Object.keys(skuQtyMap).length === 0) { alert("No inventory data returned. Use CSV import as fallback."); return; }
-        const baseImplied = {};
-        listings.forEach(function(listing) { const lsku = normalizeSku(listing.sku); const eq = skuQtyMap[lsku]; if (typeof eq !== "number") return; (listing.components || []).forEach(function(c) { if (!baseImplied[c.base]) baseImplied[c.base] = []; baseImplied[c.base].push(eq * c.qty); }); });
-        let updatedCount = 0;
-        bases.forEach(function(base) { const imp = baseImplied[base.code]; if (imp && imp.length > 0) { const ns = Math.max.apply(null, imp); if (ns !== base.stock) { base.stock = ns; updatedCount++; } } });
+        allItems.forEach(function(item) {
+          if (item.sku && typeof item.quantityAvailable === "number") {
+            skuQtyMap[normalizeSku(item.sku)] = item.quantityAvailable;
+          }
+        });
+        if (Object.keys(skuQtyMap).length === 0) { alert("No SKU data returned from eBay."); return; }
+        var baseImplied = {};
+        listings.forEach(function(listing) {
+          var lsku = normalizeSku(listing.sku);
+          var eq = skuQtyMap[lsku];
+          if (typeof eq !== "number") return;
+          (listing.components || []).forEach(function(c) {
+            if (!baseImplied[c.base]) baseImplied[c.base] = [];
+            baseImplied[c.base].push(eq * c.qty);
+          });
+        });
+        var updatedCount = 0;
+        bases.forEach(function(base) {
+          var imp = baseImplied[base.code];
+          if (imp && imp.length > 0) {
+            var ns = Math.max.apply(null, imp);
+            if (ns !== base.stock) { base.stock = ns; updatedCount++; }
+          }
+        });
         save("bases"); renderStock();
-        alert("eBay inventory sync complete! " + Object.keys(skuQtyMap).length + " SKUs found, " + Object.keys(baseImplied).length + " bases mapped, " + updatedCount + " updated");
+        alert("eBay inventory sync complete!\n\n" + allItems.length + " listings found\n" + Object.keys(skuQtyMap).length + " with SKUs\n" + Object.keys(baseImplied).length + " bases mapped\n" + updatedCount + " updated");
       } catch (err) { alert("Inventory sync failed: " + err.message);
       } finally { if (btn) { btn.disabled = false; btn.textContent = "Sync stock from eBay"; } }
     }
