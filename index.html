@@ -923,13 +923,27 @@ async function fetchOrders(mode) {
           allItems = allItems.concat(data.items || []);
           page++;
         }
-        const skuQtyMap = {};
+        // Deduplicate: XML parser can return same item multiple times — keep highest quantityAvailable
+        var seen = {};
         allItems.forEach(function(item) {
+          var key = (item.itemId || "") + "_" + (item.sku || "");
+          if (!seen[key] || item.quantityAvailable > (seen[key].quantityAvailable || 0)) {
+            seen[key] = item;
+          }
+        });
+        var deduped = Object.values(seen);
+        // Build SKU map using MAX per normalized SKU
+        var skuQtyMap = {};
+        deduped.forEach(function(item) {
           if (item.sku && typeof item.quantityAvailable === "number") {
-            skuQtyMap[normalizeSku(item.sku)] = item.quantityAvailable;
+            var norm = normalizeSku(item.sku);
+            if (skuQtyMap[norm] === undefined || item.quantityAvailable > skuQtyMap[norm]) {
+              skuQtyMap[norm] = item.quantityAvailable;
+            }
           }
         });
         if (Object.keys(skuQtyMap).length === 0) { alert("No SKU data returned from eBay."); return; }
+        // Reverse-map to base stock using component ratios
         var baseImplied = {};
         listings.forEach(function(listing) {
           var lsku = normalizeSku(listing.sku);
@@ -949,8 +963,8 @@ async function fetchOrders(mode) {
           }
         });
         save("bases"); renderStock();
-        alert("eBay inventory sync complete!\n\n" + allItems.length + " listings found\n" + Object.keys(skuQtyMap).length + " with SKUs\n" + Object.keys(baseImplied).length + " bases mapped\n" + updatedCount + " updated");
-      } catch (err) { alert("Inventory sync failed: " + err.message);
+        alert("eBay sync complete!\n\n" + deduped.length + " unique listings\n" + Object.keys(skuQtyMap).length + " with SKUs\n" + Object.keys(baseImplied).length + " bases mapped\n" + updatedCount + " updated");
+      } catch (err) { alert("Sync failed: " + err.message);
       } finally { if (btn) { btn.disabled = false; btn.textContent = "Sync stock from eBay"; } }
     }
 
