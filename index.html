@@ -142,7 +142,7 @@ code{font-family:var(--mono);font-size:12px;background:var(--bg-secondary);paddi
     <div class="card">
       <div class="sec">Base stock levels & smart reorder forecast</div>
       <div class="alert a-info" style="margin-bottom:12px">
-        Reorder point = 70 days × 365-day velocity (more stable for slow movers). Both 90-day and 365-day velocity shown — <span style="color:#633806;font-weight:500">amber</span> values are still seed-based estimates; import your Seller Hub orders history in Settings to replace with real data.
+        Reorder point = 70 days × blended velocity (60% 90-day + 40% 365-day) × blended velocity for responsiveness. Both 90-day and 365-day velocity shown — <span style="color:#633806;font-weight:500">amber</span> values are still seed-based estimates; import your Seller Hub orders history in Settings to replace with real data.
       </div>
       <div id="stock-table"></div>
     </div>
@@ -545,7 +545,7 @@ function velocity365(baseCode) { return velocityWindow(baseCode, 365); }
 
 // Reorder point uses 365-day velocity — stable for slow movers
 function reorderPoint(baseCode) {
-  const vel = velocity365(baseCode);
+  const vel = 0.6 * velocity90(baseCode) + 0.4 * velocity365(baseCode);
   return vel > 0 ? Math.ceil(vel * 70) : null;
 }
 
@@ -682,7 +682,7 @@ function renderStock() {
     const rp = reorderPoint(b.code);
     if (b.stock <= 0) { out++; return; }
     if (rp && b.stock <= rp) { reorderNow++; return; }
-    const vel = velocity365(b.code);
+    const vel = 0.6 * velocity90(b.code) + 0.4 * velocity365(b.code);
     const d = vel > 0 ? Math.floor(b.stock / vel) : null;
     if (d !== null && d < 30) low++;
   });
@@ -762,7 +762,7 @@ function renderStock() {
     const rp = reorderPoint(b.code);
     return b.stock <= 0 || (rp && b.stock <= rp);
   }).map(b => {
-    const vel  = velocity365(b.code);
+    const vel = 0.6 * velocity90(b.code) + 0.4 * velocity365(b.code);
     const days = vel > 0 ? Math.floor(b.stock / vel) : null;
     const seedWarn = isSeedOnly(b.code, 365) ? ' <em style="font-size:11px;opacity:.75">(velocity is a seed estimate — import your Seller Hub orders CSV to confirm)</em>' : '';
     if (b.stock <= 0)
