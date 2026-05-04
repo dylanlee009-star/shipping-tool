@@ -192,7 +192,14 @@ code{font-family:var(--mono);font-size:12px;background:var(--bg-secondary);paddi
     <div id="ebay-orders-section" style="display:none">
       <div class="card" style="padding:.75rem 1.25rem">
         <div class="flex">
-          <button class="btn btn-primary" onclick="fetchOrders('awaiting')">Fetch awaiting shipment</button>
+                    <div class="mb" style="margin-bottom:12px">
+            <div class="sec">Fetch order history for profitability</div>
+            <button class="btn" onclick="fetchHistoricalOrders(90)">Last 90 days</button>
+            <button class="btn" onclick="fetchHistoricalOrders(180)" style="margin-left:8px">Last 180 days</button>
+            <button class="btn" onclick="fetchHistoricalOrders(365)" style="margin-left:8px">Last 365 days</button>
+            <div id="historical-status" style="margin-top:8px;font-size:13px"></div>
+          </div>
+<button class="btn btn-primary" onclick="fetchOrders('awaiting')">Fetch awaiting shipment</button>
           <button class="btn btn-secondary btn-sm" onclick="fetchOrders('all')">Fetch all recent</button>
           <button class="btn btn-secondary btn-sm" onclick="disconnectEbay()">Disconnect eBay</button>
           <span id="fetch-status" style="font-size:13px;color:var(--text-secondary)"></span>
@@ -966,6 +973,59 @@ async function refreshAccessToken() {
   return false;
 }
 
+
+    async function fetchHistoricalOrders(days) {
+      if (!ebayToken) { alert('Connect eBay first'); return; }
+      var statusEl = document.getElementById('historical-status');
+      if (statusEl) statusEl.innerHTML = '<span class="spinner"></span> Fetching...';
+      try {
+        await refreshAccessToken();
+        var token = ebayToken;
+        var WORKER = 'https://shippingtool.dylanlee009.workers.dev';
+        var now = new Date();
+        var from = new Date(now.getTime() - days * 24 * 60 * 60 * 1000);
+        var fromStr = from.toISOString();
+        var allOrders = [];
+        var offset = 0;
+        var hasMore = true;
+        var pageCount = 0;
+        while (hasMore) {
+          var filter = '?filter=creationdate:%5B' + fromStr + '..%5D&limit=50&offset=' + offset;
+          var res = await fetch(WORKER + '/orders' + filter, {
+            headers: { 'Authorization': 'Bearer ' + token, 'Content-Type': 'application/json' }
+          });
+          if (res.status === 401) {
+            var refreshed = await refreshAccessToken();
+            if (refreshed) { token = ebayToken; continue; }
+            if (statusEl) statusEl.innerHTML = '<span style="color:var(--text-danger)">Token expired. Re-authenticate.</span>';
+            return;
+          }
+          if (!res.ok) { break; }
+          var data = await res.json();
+          var orders = data.orders || [];
+          allOrders = allOrders.concat(orders);
+          pageCount++;
+          if (statusEl) statusEl.innerHTML = '<span class="spinner"></span> ' + allOrders.length + ' orders fetched (page ' + pageCount + ')...';
+          if (orders.length < 50) { hasMore = false; } else { offset += 50; }
+        }
+        if (allOrders.length === 0) {
+          if (statusEl) statusEl.innerHTML = 'No orders found in the last ' + days + ' days.';
+          return;
+        }
+        // Auto-deduct stock from new orders
+        var dr = autoDeductFromOrders(allOrders);
+        // Store revenue data per order
+        storeOrderRevenue(allOrders);
+        // Store in localStorage
+        localStorage.setItem('ap3_orders', JSON.stringify(allOrders));
+        save();
+        renderStock();
+        if (statusEl) statusEl.innerHTML = '<span style="color:#27500A">Done! ' + allOrders.length + ' orders fetched (' + days + ' days). ' + dr.newCount + ' new stock deductions, ' + dr.skipped + ' already processed.</span>';
+      } catch (err) {
+        if (statusEl) statusEl.innerHTML = '<span style="color:var(--text-danger)">Error: ' + err.message + '</span>';
+      }
+    }
+
 async function fetchOrders(mode) {
   const status = document.getElementById('fetch-status');
   const deductStatus = document.getElementById('auto-deduct-status');
@@ -1053,7 +1113,7 @@ async function fetchOrders(mode) {
       } catch (err) { alert("Sync failed: " + err.message);
       } finally { if (btn) { btn.disabled = false; btn.textContent = "Sync stock from eBay"; } }
     
-      addProfitColumn();
+      setTimeout(addProfitColumn, 0);
     }
 
     function autoDeductFromOrders(ebayOrders) {
