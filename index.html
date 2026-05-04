@@ -573,6 +573,102 @@ function stockBadge(b) {
   return `<span class="badge b-green">${b.stock}</span>`;
 }
 
+
+    function calcBaseProfitPerUnit(baseCode) {
+      // Calculate blended profit per base unit from order revenue data
+      var revenue = JSON.parse(localStorage.getItem('ap3_ebay_revenue') || '{}');
+      var postage = profitCfg.postageCost || 9.5;
+      var packaging = profitCfg.packagingCost || 0.9;
+      var fvfPct = profitCfg.fvfPct || 13;
+      var postageOverrides = JSON.parse(localStorage.getItem('ap3_postage_overrides') || '{}');
+      // Find all listings that use this base
+      var relevantListings = listings.filter(function(l) {
+        return l.components && l.components.some(function(c) { return c.base === baseCode; });
+      });
+      var totalProfitUnits = 0;
+      var totalBaseUnits = 0;
+      relevantListings.forEach(function(listing) {
+        var comp = listing.components.find(function(c) { return c.base === baseCode; });
+        if (!comp) return;
+        // Aggregate revenue for this listing SKU across all orders
+        var listingRev = 0, listingQty = 0;
+        var normSku = normalizeSku(listing.sku);
+        Object.values(revenue).forEach(function(order) {
+          Object.entries(order).forEach(function(e) {
+            if (normalizeSku(e[0]) === normSku) {
+              listingRev += e[1].revenue || 0;
+              listingQty += e[1].qty || 0;
+            }
+          });
+        });
+        if (listingQty === 0) return;
+        var avgRev = listingRev / listingQty;
+        var po = postageOverrides[listing.sku] || postage;
+        var profitPerSale = avgRev - (avgRev * fvfPct / 100) - po - packaging;
+        var profitPerBaseUnit = profitPerSale / comp.qty;
+        totalProfitUnits += profitPerBaseUnit * listingQty;
+        totalBaseUnits += listingQty * comp.qty;
+      });
+      return totalBaseUnits > 0 ? totalProfitUnits / totalBaseUnits : null;
+    }
+
+
+    function addProfitColumn() {
+      var revenue = JSON.parse(localStorage.getItem('ap3_ebay_revenue') || '{}');
+      var postage = profitCfg.postageCost || 9.5;
+      var packaging = profitCfg.packagingCost || 0.9;
+      var fvf = profitCfg.fvfPct || 13;
+      var overrides = JSON.parse(localStorage.getItem('ap3_postage_overrides') || '{}');
+      var skuRev = {};
+      Object.values(revenue).forEach(function(order) {
+        Object.entries(order).forEach(function(e) {
+          var norm = normalizeSku(e[0]);
+          if (!skuRev[norm]) skuRev[norm] = { rev: 0, qty: 0 };
+          skuRev[norm].rev += e[1].revenue || 0;
+          skuRev[norm].qty += e[1].qty || 0;
+        });
+      });
+      var baseProfitPerUnit = {};
+      bases.forEach(function(base) {
+        var rl = listings.filter(function(l) {
+          return l.components && l.components.some(function(c) { return c.base === base.code; });
+        });
+        var wP = 0, wU = 0;
+        rl.forEach(function(l) {
+          var norm = normalizeSku(l.sku);
+          var sr = skuRev[norm];
+          if (!sr || sr.qty === 0) return;
+          var comp = l.components.find(function(c) { return c.base === base.code; });
+          if (!comp) return;
+          var avgRev = sr.rev / sr.qty;
+          var po = overrides[l.sku] || postage;
+          var pps = avgRev - (avgRev * fvf / 100) - po - packaging;
+          wP += (pps / comp.qty) * sr.qty * comp.qty;
+          wU += sr.qty * comp.qty;
+        });
+        baseProfitPerUnit[base.code] = wU > 0 ? wP / wU : null;
+      });
+      var table = document.getElementById('stock-table');
+      if (!table) return;
+      var rows = table.querySelectorAll('tr');
+      rows.forEach(function(row) {
+        var cells = row.querySelectorAll('td');
+        if (cells.length === 0) return;
+        var baseCode = cells[0] ? cells[0].textContent.trim() : '';
+        var ppu = baseProfitPerUnit[baseCode];
+        var vel365Text = cells[5] ? cells[5].textContent.trim() : '';
+        var vel365 = parseFloat(vel365Text) || 0;
+        var td = document.createElement('td');
+        if (ppu !== null && ppu !== undefined && vel365 > 0) {
+          var annual = Math.round(ppu * vel365 * 365);
+          td.innerHTML = '<span style="color:' + (annual >= 0 ? '#27500A' : 'var(--text-danger)') + ';font-weight:500">$' + annual.toLocaleString() + '</span>';
+        } else {
+          td.innerHTML = '<span style="color:var(--text-hint)">\u2014</span>';
+        }
+        row.appendChild(td);
+      });
+    }
+
 function renderStock() {
   let reorderNow=0, low=0, out=0;
   bases.forEach(b => {
@@ -615,7 +711,7 @@ function renderStock() {
       <th style="font-size:10px;font-weight:500;color:var(--text-secondary);padding:4px 6px;border-bottom:0.5px solid var(--border-light);text-transform:uppercase">Vel 90d</th>
       <th style="font-size:10px;font-weight:500;color:var(--text-secondary);padding:4px 6px;border-bottom:0.5px solid var(--border-light);text-transform:uppercase">Vel 365d</th>
       <th style="font-size:10px;font-weight:500;color:var(--text-secondary);padding:4px 6px;border-bottom:0.5px solid var(--border-light);text-transform:uppercase">Days left</th>
-      <th style="font-size:10px;font-weight:500;color:var(--text-secondary);padding:4px 6px;border-bottom:0.5px solid var(--border-light);text-transform:uppercase">Order by</th>
+      <th style="font-size:10px;font-weight:500;color:var(--text-secondary);padding:4px 6px;border-bottom:0.5px solid var(--border-light);text-transform:uppercase">Order by</th><th>Est. profit/yr</th>
     </tr></thead><tbody>`;
 
     gb.forEach(b => {
@@ -923,49 +1019,41 @@ async function fetchOrders(mode) {
           allItems = allItems.concat(data.items || []);
           page++;
         }
-        // Deduplicate: XML parser can return same item multiple times — keep highest quantityAvailable
         var seen = {};
         allItems.forEach(function(item) {
           var key = (item.itemId || "") + "_" + (item.sku || "");
-          if (!seen[key] || item.quantityAvailable > (seen[key].quantityAvailable || 0)) {
-            seen[key] = item;
-          }
+          if (!seen[key] || item.quantityAvailable > (seen[key].quantityAvailable || 0)) seen[key] = item;
         });
         var deduped = Object.values(seen);
-        // Build SKU map using MAX per normalized SKU
         var skuQtyMap = {};
         deduped.forEach(function(item) {
           if (item.sku && typeof item.quantityAvailable === "number") {
             var norm = normalizeSku(item.sku);
-            if (skuQtyMap[norm] === undefined || item.quantityAvailable > skuQtyMap[norm]) {
-              skuQtyMap[norm] = item.quantityAvailable;
-            }
+            if (skuQtyMap[norm] === undefined || item.quantityAvailable > skuQtyMap[norm]) skuQtyMap[norm] = item.quantityAvailable;
           }
         });
-        if (Object.keys(skuQtyMap).length === 0) { alert("No SKU data returned from eBay."); return; }
-        // Reverse-map to base stock using component ratios
-        var baseImplied = {};
+        if (Object.keys(skuQtyMap).length === 0) { alert("No SKU data returned."); return; }
+        var baseTotals = {};
         listings.forEach(function(listing) {
           var lsku = normalizeSku(listing.sku);
           var eq = skuQtyMap[lsku];
           if (typeof eq !== "number") return;
           (listing.components || []).forEach(function(c) {
-            if (!baseImplied[c.base]) baseImplied[c.base] = [];
-            baseImplied[c.base].push(eq * c.qty);
+            if (!baseTotals[c.base]) baseTotals[c.base] = 0;
+            baseTotals[c.base] += eq * c.qty;
           });
         });
         var updatedCount = 0;
         bases.forEach(function(base) {
-          var imp = baseImplied[base.code];
-          if (imp && imp.length > 0) {
-            var ns = Math.max.apply(null, imp);
-            if (ns !== base.stock) { base.stock = ns; updatedCount++; }
-          }
+          var total = baseTotals[base.code];
+          if (typeof total === "number" && total !== base.stock) { base.stock = total; updatedCount++; }
         });
         save("bases"); renderStock();
-        alert("eBay sync complete!\n\n" + deduped.length + " unique listings\n" + Object.keys(skuQtyMap).length + " with SKUs\n" + Object.keys(baseImplied).length + " bases mapped\n" + updatedCount + " updated");
+        alert("eBay sync complete!\n\n" + deduped.length + " unique listings\n" + Object.keys(skuQtyMap).length + " with SKUs\n" + Object.keys(baseTotals).length + " bases mapped\n" + updatedCount + " updated");
       } catch (err) { alert("Sync failed: " + err.message);
       } finally { if (btn) { btn.disabled = false; btn.textContent = "Sync stock from eBay"; } }
+    
+      addProfitColumn();
     }
 
     function autoDeductFromOrders(ebayOrders) {
