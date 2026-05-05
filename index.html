@@ -620,7 +620,46 @@ function stockBadge(b) {
     }
 
 
-    function addProfitColumn() {
+    
+    function estAnnualProfitHtml(baseCode, vel) {
+      var revenue = JSON.parse(localStorage.getItem('ap3_ebay_revenue') || '{}');
+      var postage = profitCfg.postageCost || 9.5;
+      var packaging = profitCfg.packagingCost || 0.9;
+      var fvf = profitCfg.fvfPct || 13;
+      var overrides = JSON.parse(localStorage.getItem('ap3_postage_overrides') || '{}');
+      var skuRev = {};
+      Object.values(revenue).forEach(function(order) {
+        Object.entries(order).forEach(function(e) {
+          var norm = normalizeSku(e[0]);
+          if (!skuRev[norm]) skuRev[norm] = { rev: 0, qty: 0 };
+          skuRev[norm].rev += e[1].revenue || 0;
+          skuRev[norm].qty += e[1].qty || 0;
+        });
+      });
+      var rl = listings.filter(function(l) {
+        return l.components && l.components.some(function(c) { return c.base === baseCode; });
+      });
+      var wP = 0, wU = 0;
+      rl.forEach(function(l) {
+        var norm = normalizeSku(l.sku);
+        var sr = skuRev[norm];
+        if (!sr || sr.qty === 0) return;
+        var comp = l.components.find(function(c) { return c.base === baseCode; });
+        if (!comp) return;
+        var avgRev = sr.rev / sr.qty;
+        var po = overrides[l.sku] || postage;
+        var pps = avgRev - (avgRev * fvf / 100) - po - packaging;
+        wP += (pps / comp.qty) * sr.qty * comp.qty;
+        wU += sr.qty * comp.qty;
+      });
+      var ppu = wU > 0 ? wP / wU : null;
+      if (ppu === null || vel <= 0) return '<span style="color:var(--text-hint)">\u2014</span>';
+      var annual = Math.round(ppu * vel * 365);
+      var color = annual >= 0 ? '#27500A' : 'var(--text-danger)';
+      return '<span style="color:' + color + ';font-weight:500">$' + annual.toLocaleString() + '</span>';
+    }
+
+function addProfitColumn() {
       var revenue = JSON.parse(localStorage.getItem('ap3_ebay_revenue') || '{}');
       var postage = profitCfg.postageCost || 9.5;
       var packaging = profitCfg.packagingCost || 0.9;
@@ -752,6 +791,7 @@ function renderStock() {
         <td style="font-size:12px;padding:6px;border-bottom:0.5px solid var(--border-light)">${velCell(v365, seed365)}</td>
         <td style="font-size:12px;padding:6px;border-bottom:0.5px solid var(--border-light)">${days !== null ? days + 'd' : '—'}</td>
         <td style="font-size:12px;padding:6px;border-bottom:0.5px solid var(--border-light)">${obDate}</td>
+      <td>${estAnnualProfitHtml(b.code, vel)}</td>
       </tr>`;
     });
     html += `</tbody></table>`;
@@ -1113,7 +1153,7 @@ async function fetchOrders(mode) {
       } catch (err) { alert("Sync failed: " + err.message);
       } finally { if (btn) { btn.disabled = false; btn.textContent = "Sync stock from eBay"; } }
     
-      setTimeout(addProfitColumn, 0);
+      // profit column rendered inline
     }
 
     function autoDeductFromOrders(ebayOrders) {
