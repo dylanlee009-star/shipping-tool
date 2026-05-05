@@ -374,6 +374,7 @@ const COGS = {
   'T_R':4.97,'T_L':4.97,'ST':5.11,
   'P':6.25,'LS':10.61,'Tongue':1.49,
   'SMA':1.60,'SSSTEEL':9.25,'GS_FR':17.60,
+  'QT':0.00,'MHL':0.00,
   'SAjacket_XS':7.35,'SAjacket_S':7.35,'SAjacket_M':7.35,
   'SAjacket_L':7.35,'SAjacket_XL':7.35,'SAjacket_XXL':7.35
 };
@@ -401,6 +402,8 @@ const DEFAULT_BASES = [
   {code:'GS_FR',  name:'Ford Ranger tailgate strut', stock:14,  type:'standalone', reorderDays:70},
   {code:'SSSTEEL',name:'Steel crypto wallet',         stock:6,   type:'standalone', reorderDays:70},
   {code:'SMA',    name:'Support arm band',            stock:379, type:'standalone', reorderDays:70},
+  {code:'QT',     name:'Quarter turn latch',             stock:0,   type:'standalone', reorderDays:70},
+  {code:'MHL',    name:'Motorhome latch',                stock:0,   type:'standalone', reorderDays:70},
 ];
 
 const DEFAULT_LISTINGS = [
@@ -445,6 +448,8 @@ const DEFAULT_LISTINGS = [
   {sku:'GS_FR',  label:'Ford Ranger tailgate strut',postage:'PP', weightKg:1.0,  components:[{base:'GS_FR',qty:1}]},
   {sku:'SSSTEEL',label:'Steel crypto wallet',       postage:'EXP',weightKg:0.4,  components:[{base:'SSSTEEL',qty:1}]},
   {sku:'SMA',    label:'Support arm band',          postage:'PP', weightKg:0.15, components:[{base:'SMA',qty:1}]},
+  {sku:'QT',     label:'Quarter turn latch',       postage:'PP', weightKg:0.20, components:[{base:'QT',qty:1}]},
+  {sku:'MHL',    label:'Motorhome latch',          postage:'PP', weightKg:0.30, components:[{base:'MHL',qty:1}]},
 ];
 
 // Seed velocity constants (units/day based on 365-day historical data)
@@ -452,7 +457,8 @@ const VELOCITY = {
   'BLK_CL':0.6349,'CL':1.0317,'CB':1.2302,'CS':0.7063,'GS_FR':0.1587,'LS':0.1865,
   'P':1.0952,'SAjacket_XS':0.0119,'SAjacket_S':0.0000,'SAjacket_M':0.0159,
   'SAjacket_L':0.0119,'SAjacket_XL':0.0119,'SAjacket_XXL':0.0159,
-  'SMA':0.2540,'SSSTEEL':0.1270,'ST':0.2143,'T_L':0.3571,'T_R':0.8651,'Tongue':0.2897
+  'SMA':0.2540,'SSSTEEL':0.1270,'ST':0.2143,'T_L':0.3571,'T_R':0.8651,'Tongue':0.2897,
+  'QT':0.0000,'MHL':0.0000
 };
 
 // ══════════════════════════════════════════════
@@ -469,6 +475,25 @@ let ebayFees = JSON.parse(localStorage.getItem('ap3_ebay_revenue') || '{}');
 let ebayRevenue = JSON.parse(localStorage.getItem('ap3_ebay_revenue') || '{}');
 let profitCfg = JSON.parse(localStorage.getItem('ap3_profit_cfg') || '{"postageCost":9.50,"packagingCost":0.90,"fvfPct":13.0}');
 let postageOverrides = JSON.parse(localStorage.getItem('ap3_postage_overrides') || '{}');
+
+
+// Add any new default bases/listings to existing browser data without wiping saved stock/history.
+function mergeNewDefaults() {
+  const existingBaseCodes = new Set(bases.map(b => b.code));
+  DEFAULT_BASES.forEach(b => {
+    if (!existingBaseCodes.has(b.code)) bases.push(JSON.parse(JSON.stringify(b)));
+  });
+
+  const existingListingSkus = new Set(listings.map(l => normalizeSku(l.sku)));
+  DEFAULT_LISTINGS.forEach(l => {
+    const norm = normalizeSku(l.sku);
+    if (!existingListingSkus.has(norm) && !listings.some(x => x.sku === l.sku)) {
+      listings.push(JSON.parse(JSON.stringify(l)));
+      existingListingSkus.add(norm);
+    }
+  });
+}
+mergeNewDefaults();
 
 // ── Seed: spread over 365 days so they don't inflate short windows ──
 if (!sales) { sales = buildSeedSales(); localStorage.setItem('ap3_sales', JSON.stringify(sales)); }
@@ -763,10 +788,11 @@ function renderStock() {
     gb.forEach(b => {
       const v90  = velocity90(b.code);
       const v365 = velocity365(b.code);
+      const vel  = 0.6 * v90 + 0.4 * v365;
       const rp   = reorderPoint(b.code);   // based on v365
       const seed90  = isSeedOnly(b.code, 90);
       const seed365 = isSeedOnly(b.code, 365);
-      const days = v365 > 0 ? Math.floor(b.stock / v365) : null;
+      const days = vel > 0 ? Math.floor(b.stock / vel) : null;
       const obd  = days !== null ? days - 45 : null;
       const obDate = obd !== null && obd > 0
         ? new Date(Date.now() + obd * DAY_MS).toLocaleDateString('en-AU')
@@ -1057,6 +1083,7 @@ async function refreshAccessToken() {
         // Store revenue data per order
         storeOrderRevenue(allOrders);
         // Store in localStorage
+        localStorage.setItem('ap3_profit_history_days', String(days));
         localStorage.setItem('ap3_orders', JSON.stringify(allOrders));
         save();
         renderStock();
@@ -1133,23 +1160,26 @@ async function fetchOrders(mode) {
           }
         });
         if (Object.keys(skuQtyMap).length === 0) { alert("No SKU data returned."); return; }
-        var baseTotals = {};
+        var baseImplied = {};
         listings.forEach(function(listing) {
           var lsku = normalizeSku(listing.sku);
           var eq = skuQtyMap[lsku];
           if (typeof eq !== "number") return;
           (listing.components || []).forEach(function(c) {
-            if (!baseTotals[c.base]) baseTotals[c.base] = 0;
-            baseTotals[c.base] += eq * c.qty;
+            if (!baseImplied[c.base]) baseImplied[c.base] = [];
+            baseImplied[c.base].push({listingSku: listing.sku, implied: eq * c.qty});
           });
         });
         var updatedCount = 0;
         bases.forEach(function(base) {
-          var total = baseTotals[base.code];
+          var entries = baseImplied[base.code];
+          if (!entries || !entries.length) return;
+          var bestEntry = entries.reduce(function(a, b) { return b.implied > a.implied ? b : a; });
+          var total = bestEntry.implied;
           if (typeof total === "number" && total !== base.stock) { base.stock = total; updatedCount++; }
         });
         save("bases"); renderStock();
-        alert("eBay sync complete!\n\n" + deduped.length + " unique listings\n" + Object.keys(skuQtyMap).length + " with SKUs\n" + Object.keys(baseTotals).length + " bases mapped\n" + updatedCount + " updated");
+        alert("eBay sync complete!\n\n" + deduped.length + " unique listings\n" + Object.keys(skuQtyMap).length + " with SKUs\n" + Object.keys(baseImplied).length + " bases mapped\n" + updatedCount + " updated");
       } catch (err) { alert("Sync failed: " + err.message);
       } finally { if (btn) { btn.disabled = false; btn.textContent = "Sync stock from eBay"; } }
     
@@ -1195,7 +1225,13 @@ function storeOrderRevenue(ebayOrders) {
       const qty = parseInt(it.quantity) || 1;
       if (price > 0) {
         if (!ebayRevenue[orderId]) ebayRevenue[orderId] = {};
-        ebayRevenue[orderId][normSku || rawSku] = {revenue: price, qty, date: o.creationDate || new Date().toISOString()};
+        var key = normSku || rawSku;
+        if (!ebayRevenue[orderId][key]) {
+          ebayRevenue[orderId][key] = {revenue: 0, qty: 0, date: o.creationDate || new Date().toISOString()};
+        }
+        ebayRevenue[orderId][key].revenue += price;
+        ebayRevenue[orderId][key].qty += qty;
+        ebayRevenue[orderId][key].date = o.creationDate || ebayRevenue[orderId][key].date || new Date().toISOString();
       }
     });
   });
@@ -1218,16 +1254,21 @@ function loadManualJson() {
 
 function normalizeSku(raw) {
   if (!raw) return '';
-  let s = raw.trim().replace(/_[\d.]+$/, '');  // strip price/weight suffix e.g. CL2_20.53
-  // LS+SSP1..5 (actual variation SKUs in the SS bundle listing) -> LS+P1..5
-  const lsssp = s.match(/^LS\+SSP(\d+)$/i);
-  if (lsssp) return `LS+P${lsssp[1]}`;
-  // SS_P+N (legacy eBay format) -> LS+PN
-  const ssp = s.match(/^SS_P\+(\d+)$/i);
+  let s = String(raw).trim().replace(/_[\d.]+$/, '');  // strip price/weight suffix e.g. CL2_20.53
+  s = s.replace(/\s+/g, '').toUpperCase();
+
+  // LS+SSP1..5 or LP+SSP1..5 -> LS+P1..5
+  const bundleSsp = s.match(/^L[SP]\+SSP(\d+)$/i);
+  if (bundleSsp) return `LS+P${bundleSsp[1]}`;
+
+  // SS_P+N or SSP+N legacy formats -> LS+PN
+  const ssp = s.match(/^SS_?P\+(\d+)$/i);
   if (ssp) return `LS+P${ssp[1]}`;
+
   // SS1 or SSP inside variation listing -> SSP
   if (/^SS1$/i.test(s)) return 'SSP';
-  return s.toUpperCase();
+
+  return s;
 }
 
 function renderEbayOrders(ebayOrders) {
@@ -1540,6 +1581,30 @@ function cogsForListing(l) {
   return l.components.reduce((sum, c) => sum + (COGS[c.base] || 0) * c.qty, 0);
 }
 
+function profitHistoryDaysFromRevenue(skuRevenue) {
+  const stored = parseInt(localStorage.getItem('ap3_profit_history_days') || '', 10);
+  if (!isNaN(stored) && stored > 0) return stored;
+
+  const dates = [];
+  Object.values(skuRevenue).forEach(r => {
+    if (r.firstDate) dates.push(r.firstDate);
+    if (r.lastDate) dates.push(r.lastDate);
+  });
+  if (!dates.length) return 365;
+
+  const minDate = Math.min(...dates), maxDate = Math.max(...dates);
+  return Math.max(30, Math.ceil((maxDate - minDate) / DAY_MS) + 1);
+}
+
+function uniqueProfitListings() {
+  const byNorm = new Map();
+  listings.forEach(l => {
+    const norm = normalizeSku(l.sku);
+    if (!byNorm.has(norm) || l.sku === norm) byNorm.set(norm, l);
+  });
+  return Array.from(byNorm.values());
+}
+
 function renderProfit() {
   const container = document.getElementById('profit-content');
   container.innerHTML = '<div class="empty"><span class="spinner"></span> Calculating...</div>';
@@ -1550,36 +1615,46 @@ function renderProfit() {
 
   const skuRevenue = {};
   Object.values(ebayRevenue).forEach(orderItems => {
-    Object.entries(orderItems).forEach(([sku, data]) => {
-      if (!skuRevenue[sku]) skuRevenue[sku] = {totalRevenue:0, totalQty:0, orderCount:0};
-      skuRevenue[sku].totalRevenue += data.revenue;
-      skuRevenue[sku].totalQty    += data.qty;
+    Object.entries(orderItems).forEach(([rawSku, data]) => {
+      const sku = normalizeSku(rawSku);
+      if (!skuRevenue[sku]) skuRevenue[sku] = {totalRevenue:0, totalQty:0, orderCount:0, firstDate:null, lastDate:null};
+      skuRevenue[sku].totalRevenue += parseFloat(data.revenue || 0);
+      skuRevenue[sku].totalQty    += parseInt(data.qty || 0) || 0;
       skuRevenue[sku].orderCount  += 1;
+      const ts = data.date ? new Date(data.date).getTime() : null;
+      if (ts && !isNaN(ts)) {
+        skuRevenue[sku].firstDate = skuRevenue[sku].firstDate ? Math.min(skuRevenue[sku].firstDate, ts) : ts;
+        skuRevenue[sku].lastDate  = skuRevenue[sku].lastDate  ? Math.max(skuRevenue[sku].lastDate, ts)  : ts;
+      }
     });
   });
 
-  const rows = listings.map(l => {
+  const historyDays = profitHistoryDaysFromRevenue(skuRevenue);
+  const profitListings = uniqueProfitListings();
+
+  const rows = profitListings.map(l => {
+    const normSku = normalizeSku(l.sku);
     const cogs = cogsForListing(l);
-    const rev  = skuRevenue[l.sku];
+    const rev  = skuRevenue[normSku];
     const avgRevenue = rev && rev.totalQty > 0 ? rev.totalRevenue / rev.totalQty : null;
     const fvf  = avgRevenue ? avgRevenue * fvfPct + fixedFeePerOrder / Math.max(rev.orderCount, 1) : null;
     const avgQty = rev && rev.orderCount > 0 ? rev.totalQty / rev.orderCount : null;
     const postageCost = postageForSku(l.sku);
     const hasOverride = postageOverrides[l.sku] !== undefined && postageOverrides[l.sku] !== '';
 
-    // Monthly units from 365-day velocity (more reliable)
-    const primaryBase = l.components[0]?.base;
-    const vel365 = primaryBase ? velocity365(primaryBase) : 0;
-    const primaryQty = l.components[0]?.qty || 1;
-    const monthlyUnits = (vel365 / primaryQty) * 30;
+    // Use actual units sold for this listing over the fetched history window.
+    // The previous method used base velocity for every variant, which double-counted
+    // shared bases like CL2/CL6 and LS+SSP bundles.
+    const monthlyUnits = rev && rev.totalQty > 0 ? (rev.totalQty / historyDays) * 30 : 0;
 
     const totalCostPerUnit = cogs + postageCost + packagingCost + (fvf || (avgRevenue ? avgRevenue * fvfPct + fixedFeePerOrder : 0));
     const grossMargin  = avgRevenue ? avgRevenue - totalCostPerUnit : null;
     const marginPct    = avgRevenue && grossMargin !== null ? grossMargin / avgRevenue * 100 : null;
     const monthlyProfit = grossMargin !== null ? grossMargin * monthlyUnits : null;
+    const annualProfit = grossMargin !== null ? grossMargin * (monthlyUnits * 12) : null;
 
-    return {l, cogs, avgRevenue, avgQty, fvf, postageCost, hasOverride, packagingCost,
-            totalCostPerUnit, grossMargin, marginPct, monthlyUnits, monthlyProfit, hasRevData:!!rev};
+    return {l, normSku, cogs, avgRevenue, avgQty, fvf, postageCost, hasOverride, packagingCost,
+            totalCostPerUnit, grossMargin, marginPct, monthlyUnits, monthlyProfit, annualProfit, hasRevData:!!rev};
   });
 
   const rowsWithData = rows.filter(r => r.hasRevData && r.grossMargin !== null);
@@ -1589,12 +1664,14 @@ function renderProfit() {
   const totalMonthlyPost   = rowsWithData.reduce((s,r) => s + r.postageCost * r.monthlyUnits, 0);
   const totalMonthlyPack   = rowsWithData.reduce((s,r) => s + r.packagingCost * r.monthlyUnits, 0);
   const totalMonthlyProfit = rowsWithData.reduce((s,r) => s + (r.monthlyProfit||0), 0);
+  const totalAnnualProfit  = totalMonthlyProfit * 12;
 
   const hasAnyRevData = rowsWithData.length > 0;
   const hasFinancesScope = ebayToken && localStorage.getItem('ebay_refresh_token');
   const ranked = [...rowsWithData].sort((a,b) => (b.marginPct||0) - (a.marginPct||0));
 
   const fmt = (n, dp=2) => n !== null && !isNaN(n) ? '$' + Math.abs(n).toFixed(dp) : '-';
+  const fmtSigned = (n, dp=2) => n !== null && !isNaN(n) ? (n < 0 ? '-' : '') + fmt(n, dp) : '-';
   const fmtPct = n => n !== null && !isNaN(n) ? n.toFixed(1) + '%' : '-';
 
   let html = '';
@@ -1609,11 +1686,12 @@ function renderProfit() {
 
   if (hasAnyRevData) {
     const overallMarginPct = totalMonthlyRevenue > 0 ? totalMonthlyProfit / totalMonthlyRevenue * 100 : 0;
+    html += `<div class="alert a-info" style="margin-bottom:1rem">Profit run-rate is based on <strong>actual units sold per listing</strong> over the fetched history window (<strong>${historyDays} days</strong>), not base SKU velocity. This avoids double-counting variants that share the same base stock.</div>`;
     html += `<div class="stat-grid-5" style="margin-bottom:1.5rem">
-      <div class="stat"><div class="stat-label">Est. monthly revenue</div><div class="stat-value">${fmt(totalMonthlyRevenue,0)}</div><div class="stat-sub">365d velocity</div></div>
+      <div class="stat"><div class="stat-label">Est. monthly revenue</div><div class="stat-value">${fmt(totalMonthlyRevenue,0)}</div><div class="stat-sub">order-history run-rate</div></div>
       <div class="stat"><div class="stat-label">Est. monthly COGS</div><div class="stat-value">${fmt(totalMonthlyCOGS,0)}</div></div>
       <div class="stat"><div class="stat-label">Est. monthly fees</div><div class="stat-value">${fmt(totalMonthlyFees+totalMonthlyPost+totalMonthlyPack,0)}</div><div class="stat-sub">eBay + postage + pack</div></div>
-      <div class="stat"><div class="stat-label">Est. monthly profit</div><div class="stat-value" style="color:${totalMonthlyProfit>=0?'#27500A':'#A32D2D'}">${totalMonthlyProfit<0?'-':''}${fmt(totalMonthlyProfit,0)}</div></div>
+      <div class="stat"><div class="stat-label">Est. monthly profit</div><div class="stat-value" style="color:${totalMonthlyProfit>=0?'#27500A':'#A32D2D'}">${fmtSigned(totalMonthlyProfit,0)}</div><div class="stat-sub">Annualised: ${fmtSigned(totalAnnualProfit,0)}</div></div>
       <div class="stat"><div class="stat-label">Overall margin</div><div class="stat-value" style="color:${overallMarginPct>=20?'#27500A':overallMarginPct>=0?'#633806':'#A32D2D'}">${fmtPct(overallMarginPct)}</div></div>
     </div>`;
     if (ranked.length >= 2) {
@@ -1623,14 +1701,14 @@ function renderProfit() {
           <strong style="font-family:var(--mono)">${ranked[0].l.sku}</strong>
           <span style="font-size:12px;color:var(--text-secondary);margin-left:8px">${ranked[0].l.label}</span>
           <div style="margin-top:4px"><span class="badge b-green">${fmtPct(ranked[0].marginPct)} margin</span>
-          <span style="font-size:12px;color:var(--text-secondary);margin-left:8px">${fmt(ranked[0].grossMargin)} per unit · ${fmt(ranked[0].monthlyProfit,0)}/mo</span></div>
+          <span style="font-size:12px;color:var(--text-secondary);margin-left:8px">${fmtSigned(ranked[0].grossMargin)} per unit · ${fmtSigned(ranked[0].monthlyProfit,0)}/mo</span></div>
         </div>
         <div class="card" style="margin-bottom:0;border-left:3px solid #E24B4A">
           <div class="sec">Least profitable listing</div>
           <strong style="font-family:var(--mono)">${ranked[ranked.length-1].l.sku}</strong>
           <span style="font-size:12px;color:var(--text-secondary);margin-left:8px">${ranked[ranked.length-1].l.label}</span>
           <div style="margin-top:4px"><span class="badge ${(ranked[ranked.length-1].marginPct||0)<0?'b-red':'b-amber'}">${fmtPct(ranked[ranked.length-1].marginPct)} margin</span>
-          <span style="font-size:12px;color:var(--text-secondary);margin-left:8px">${fmt(ranked[ranked.length-1].grossMargin)} per unit · ${fmt(ranked[ranked.length-1].monthlyProfit,0)}/mo</span></div>
+          <span style="font-size:12px;color:var(--text-secondary);margin-left:8px">${fmtSigned(ranked[ranked.length-1].grossMargin)} per unit · ${fmtSigned(ranked[ranked.length-1].monthlyProfit,0)}/mo</span></div>
         </div>
       </div>`;
     }
@@ -1641,7 +1719,7 @@ function renderProfit() {
       <th style="text-align:left">SKU</th><th style="text-align:left">Listing</th>
       <th>Avg sale price</th><th>Avg qty/order</th><th>COGS</th><th>eBay fees</th>
       <th>Postage</th><th>Packaging</th><th>Gross profit</th><th>Margin</th>
-      <th>Monthly units</th><th>Monthly profit</th>
+      <th>Monthly units</th><th>Monthly profit</th><th>Annual profit</th>
     </tr></thead><tbody>`;
 
   rows.forEach(r => {
@@ -1660,11 +1738,12 @@ function renderProfit() {
       <td>${r.fvf!==null?fmt(r.fvf):'<span style="color:var(--text-hint);font-size:11px">est. '+(r.avgRevenue!==null?fmt(r.avgRevenue*(parseFloat(profitCfg.fvfPct)||13)/100):'—')+'</span>'}</td>
       <td>${postCell}</td>
       <td>${fmt(r.packagingCost)}</td>
-      <td style="color:${r.grossMargin!==null?(r.grossMargin>=0?'#27500A':'#A32D2D'):'var(--text-hint)'}">${r.grossMargin!==null?(r.grossMargin<0?'-':'')+fmt(r.grossMargin):'—'}</td>
+      <td style="color:${r.grossMargin!==null?(r.grossMargin>=0?'#27500A':'#A32D2D'):'var(--text-hint)'}">${r.grossMargin!==null?fmtSigned(r.grossMargin):'—'}</td>
       <td><span style="color:${mc};font-weight:500">${fmtPct(r.marginPct)}</span>
         <div class="margin-bar"><div class="margin-fill" style="width:${mbw}%;background:${mbc}"></div></div></td>
       <td>${r.monthlyUnits>0?r.monthlyUnits.toFixed(1):'<span style="color:var(--text-hint)">—</span>'}</td>
-      <td style="color:${r.monthlyProfit!==null?(r.monthlyProfit>=0?'#27500A':'#A32D2D'):'var(--text-hint)'}">${r.monthlyProfit!==null?(r.monthlyProfit<0?'-':'')+fmt(r.monthlyProfit,0):'—'}</td>
+      <td style="color:${r.monthlyProfit!==null?(r.monthlyProfit>=0?'#27500A':'#A32D2D'):'var(--text-hint)'}">${r.monthlyProfit!==null?fmtSigned(r.monthlyProfit,0):'—'}</td>
+      <td style="color:${r.annualProfit!==null?(r.annualProfit>=0?'#27500A':'#A32D2D'):'var(--text-hint)'}">${r.annualProfit!==null?fmtSigned(r.annualProfit,0):'—'}</td>
     </tr>`;
   });
 
@@ -1676,7 +1755,7 @@ function renderProfit() {
       Default postage $${defaultPostage.toFixed(2)}${overrideCount>0?` · <span style="color:#0C447C">${overrideCount} SKU${overrideCount!==1?'s':''} with overrides</span>`:''} ·
       Packaging $${(parseFloat(profitCfg.packagingCost)||0.90).toFixed(2)} ·
       ${hasFinancesScope?'eBay fees from Finances API':'FVF estimated at '+(parseFloat(profitCfg.fvfPct)||13).toFixed(1)+'%'} ·
-      Monthly units = 365-day velocity × 30
+      Monthly units = actual SKU units sold ÷ ${historyDays} days × 30 · annual profit = monthly profit × 12.
     </div>
   </div>`;
 
@@ -1691,6 +1770,7 @@ function renderProfit() {
         </div>`;
       }).join('')}
     </div>
+    <p style="font-size:11px;color:var(--text-secondary);margin-top:8px">QT and MHL have placeholder $0.00 COGS until you update their landed costs.</p>
   </div>`;
 
   container.innerHTML = html;
